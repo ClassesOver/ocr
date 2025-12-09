@@ -55,6 +55,9 @@ WORKDIR /app
 RUN uv venv --python 3.11 /app/.venv && \
     chown -R ocruser:ocruser /app/.venv
 
+# 设置虚拟环境为全局 Python 环境
+ENV PATH="/app/.venv/bin:$PATH" \
+    VIRTUAL_ENV="/app/.venv"
 
 # 复制依赖文件并安装（利用缓存层）
 COPY --chown=ocruser:ocruser requirements.txt .
