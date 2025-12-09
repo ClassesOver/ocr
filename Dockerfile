@@ -61,6 +61,7 @@ COPY --chown=ocruser:ocruser requirements.txt .
 RUN uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu && \
     uv pip install -r requirements.txt && \
     uv pip install -U ultralytics && \
+    uv pip install -U gunicorn && \
     chown -R ocruser:ocruser /app/.venv
 
 # 复制应用代码
@@ -71,10 +72,6 @@ USER ocruser
 
 # 暴露端口
 EXPOSE 8078
-
-# 健康检查
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8078/ || exit 1
 
 # 启动应用（使用 Gunicorn）
 CMD ["gunicorn", "-c", "gunicorn.conf.py", "api:app"]
