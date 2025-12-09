@@ -32,8 +32,7 @@ RUN apt-get update && \
         wget \
         curl \
         git \
-        ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
+        ca-certificates
 
 # 设置 Python 3.11 为默认版本
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 && \
