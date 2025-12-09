@@ -52,16 +52,12 @@ WORKDIR /app
 RUN uv venv --python python3.11 /app/.venv && \
     chown -R ocruser:ocruser /app/.venv
 
-# 设置虚拟环境为全局 Python 环境
-ENV PATH="/app/.venv/bin:$PATH"
-ENV VIRTUAL_ENV="/app/.venv"
 
 # 复制依赖文件并安装（利用缓存层）
 COPY --chown=ocruser:ocruser requirements.txt .
 RUN uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu && \
     uv pip install -r requirements.txt && \
     uv pip install -U ultralytics && \
-    uv pip install -U gunicorn && \
     chown -R ocruser:ocruser /app/.venv
 
 # 复制应用代码
@@ -73,5 +69,5 @@ USER ocruser
 # 暴露端口
 EXPOSE 8078
 
-# 启动应用（使用 Gunicorn）
-CMD ["gunicorn", "-c", "gunicorn.conf.py", "api:app"]
+# 启动应用（使用虚拟环境中的 Gunicorn）
+CMD ["/app/.venv/bin/gunicorn", "-c", "gunicorn.conf.py", "api:app"]
