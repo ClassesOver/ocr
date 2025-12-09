@@ -1,0 +1,108 @@
+# ============================================
+# 多阶段构建 - 生产环境优化版
+# ============================================
+
+# 阶段 1: 构建阶段
+FROM ubuntu:22.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+# 安装构建依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common \
+    && add-apt-repository ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3.11-dev \
+    python3-pip \
+    gcc \
+    g++ \
+    make \
+    && rm -rf /var/lib/apt/lists/*
+
+# 设置 Python
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
+    && python3 -m pip install --upgrade pip
+
+# 安装 Python 依赖到单独目录
+COPY requirements.txt /tmp/
+RUN pip3 install --prefix=/install --no-warn-script-location \
+    -r /tmp/requirements.txt \
+    paddleocr paddlepaddle \
+    flask-pydantic loguru \
+    gunicorn gevent
+
+# ============================================
+# 阶段 2: 运行阶段
+# ============================================
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    TZ=Asia/Shanghai \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/install/lib/python3.11/site-packages
+
+# 仅安装运行时依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common \
+    && add-apt-repository ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3.11-distutils \
+    # OpenCV 运行时依赖（去除 dev 包）
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
+    libgomp1 \
+    libgl1-mesa-glx \
+    libjpeg8 \
+    libpng16-16 \
+    libtiff5 \
+    libwebp7 \
+    # 健康检查需要
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# 设置 Python
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
+    && ln -sf /usr/bin/python3.11 /usr/bin/python
+
+# 从构建阶段复制已安装的 Python 包
+COPY --from=builder /install /install
+
+# 创建非 root 用户
+RUN useradd -m -u 1000 -s /bin/bash ocruser \
+    && mkdir -p /app \
+    && chown -R ocruser:ocruser /app
+
+WORKDIR /app
+
+# 复制应用代码（分层优化）
+COPY --chown=ocruser:ocruser config.py settings.py ./
+COPY --chown=ocruser:ocruser api.py ./
+COPY --chown=ocruser:ocruser gunicorn.conf.py ./
+COPY --chown=ocruser:ocruser models/ ./models/
+COPY --chown=ocruser:ocruser obj_det/ ./obj_det/
+COPY --chown=ocruser:ocruser crnn/ ./crnn/
+COPY --chown=ocruser:ocruser apphelper/ ./apphelper/
+COPY --chown=ocruser:ocruser util/ ./util/
+COPY --chown=ocruser:ocruser utils/ ./utils/
+COPY --chown=ocruser:ocruser utils2/ ./utils2/
+COPY --chown=ocruser:ocruser tools/ ./tools/
+COPY --chown=ocruser:ocruser images/ ./images/
+
+USER ocruser
+
+EXPOSE 8078
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8078/ || exit 1
+
+# 启动应用（使用 Gunicorn）
+CMD ["gunicorn", "-c", "gunicorn.conf.py", "api:app"]

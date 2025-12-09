@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  ocr-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ocr-service:latest
+    container_name: ocr-service
+    restart: unless-stopped
+    ports:
+      - "8078:8078"
+    environment:
+      - TZ=Asia/Shanghai
+      - PYTHONUNBUFFERED=1
+      # Gunicorn 配置（可根据需要调整）
+      - GUNICORN_WORKERS=8           # 工作进程数
+      - GUNICORN_THREADS=2            # 每进程线程数
+      - GUNICORN_WORKER_CLASS=gevent  # 工作模式：sync/gevent/eventlet
+      - GUNICORN_TIMEOUT=120          # 超时时间（秒）
+      - GUNICORN_MAX_REQUESTS=1000    # 最大请求数
+      - GUNICORN_LOG_LEVEL=info       # 日志级别
+    volumes:
+      # 如果需要持久化日志，取消下面注释
+      # - ./logs:/app/logs
+      # 如果需要动态更新模型，取消下面注释
+      # - ./models:/app/models:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8078/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    # 资源限制（根据实际情况调整）
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+        reservations:
+          cpus: '2'
+          memory: 4G
+    networks:
+      - ocr-network
+
+networks:
+  ocr-network:
+    driver: bridge

@@ -1,0 +1,315 @@
+from ultralytics import YOLO
+import numpy as np
+import cv2
+import threading
+import config
+from util.tool import *
+
+lock = threading.Lock()
+
+converter = {'invoice_code': 'invoice_code',
+             'invoice_code2': 'invoice_code2',
+             'invoice_number': 'invoice_number',
+             'invoice_number2': 'invoice_number2',
+             'bill_date': 'billing_date',
+             'check_code': 'check_code',
+             'check_code2': 'check_code2',
+             'title': 'title',
+             'total': 'total_amount',
+             'tax': 'tax',
+             'amount_with_tax': 'amount_with_tax',
+             'invoice_type': 'invoice_type'}
+
+if config.ocrRange == "complex":
+    converter.update({
+        'buy_title': 'buy_title',
+        'buy_tax': 'buy_tax',
+        'buy_addr': 'buy_addr',
+        'buy_bank': 'buy_bank',
+        'sale_title': 'sale_title',
+        'sale_tax': 'sale_tax',
+        'sale_addr': 'sale_addr',
+        'sale_bank': 'sale_bank',
+        'seal_1': 'seal_1',
+        'seal_2': 'seal_2',
+    })
+
+type_converter_name = {'01': '增值税专用发票', '04': '增值税普通发票',
+                       '08': '增值税电子专用发票', '10': '增值税电子普通发票',
+                       '31': '电子发票（增值税专用发票）', '32': '电子发票（增值税普通发票）',
+                       '': '未识别的发票'}
+type_converter = {'增值税专用发票': '01', '增值税普通发票': '04',
+                  '增值税电子专用发票': '08', '增值税电子普通发票': '10',
+                  '电子发票（增值税专用发票）': '31', '电子发票（增值税普通发票）': '32'}
+
+pub_weights = f"models/vat/best.pt"
+pub_img_size = 640
+
+# 初始化 YOLO 模型
+# 根据 config.GPU 配置选择设备
+if config.GPU:
+    device = config.GPUID
+else:
+    device = 'cpu'
+
+# 使用 ultralytics YOLO 类加载模型
+model = YOLO(pub_weights)
+
+
+def get_check_code(code1, code2):
+    if not code2:
+        return get_num(code1)
+    if code1 and '验码' in code1:
+        return get_num(code1)
+    if code2 and '验码' in code2:
+        return get_num(code2)
+    return max(get_num(code1), get_num(code2))
+
+
+def judge_invoice_type(title, invoice):
+    invoice_type = None
+    if not title:
+        return False
+    if title.startswith('电子发票'):
+        if "普通" in title:
+            invoice_type = "32"
+        else:
+            invoice_type = "31"
+    else:
+        if "专用" in title:
+            if '电子' in title:
+                invoice_type = '08'
+            else:
+                invoice_type = '01'
+            invoice['invoice_type'] = "01"
+        if "普通" in title:
+            if '电子' in title:
+                invoice_type = '10'
+            else:
+                invoice_type = '04'
+    if not invoice_type:
+        if invoice.get('check_code'):
+            invoice_type = "04"
+        else:
+            invoice_type = "01"
+    invoice['invoice_type'] = invoice_type
+
+
+def judge_invoice_repeat_data(invoice):
+    # 对发票代码和发票号进行处理
+    invoice_code = invoice.get('invoice_code', '')
+    invoice_code2 = invoice.get('invoice_code2', '')
+    if invoice_code != invoice_code2:
+        if (len(invoice_code) != 12 and len(invoice_code2) == 12) or len(invoice_code) < len(invoice_code2):
+            invoice['invoice_code'] = invoice_code2
+    invoice_number = invoice.get('invoice_number', '')
+    invoice_number2 = invoice.get('invoice_number2', '')
+    if invoice_number != invoice_number2:
+        in1 = len(invoice_number)
+        in2 = len(invoice_number2)
+        if in1 == 8:
+            invoice_number_really = invoice_number
+        elif in2 == 8:
+            invoice_number_really = invoice_number2
+        elif in2 > in1:
+            invoice_number_really = invoice_number2
+        else:
+            invoice_number_really = invoice_number
+        invoice['invoice_number'] = invoice_number_really
+    invoice['check_code'] = get_check_code(invoice.get('check_code'), invoice.get('check_code2'))
+    if invoice.__contains__('check_code2'):
+        del invoice['check_code2']
+    if invoice.__contains__('invoice_code2'):
+        del invoice['invoice_code2']
+    if invoice.__contains__('invoice_number2'):
+        del invoice['invoice_number2']
+
+
+def ocr_buy_sale(ocr, label, img):
+    """
+    识别购买方/销售方信息
+    
+    Args:
+        ocr: OCR 识别方法
+        label: 字段标签
+        img: 图像区域
+        
+    Returns:
+        识别的文本
+    """
+    text = ocr(img)
+    if label in ('buy_tax', 'sale_tax'):
+        text = get_tax(text)
+    if label in ('buy_title', 'sale_title'):
+        text = get_title(text)
+    else:
+        text = get_addr_bank(text)
+    return text.strip()
+
+
+def invoice_detection(img_numpy, invoice=None, context=None):
+    """
+    使用 ultralytics YOLO 进行发票检测和识别
+    
+    Args:
+        img_numpy: 输入图像 (numpy array)
+        invoice: 发票信息字典
+        context: OCR上下文对象
+        
+    Returns:
+        invoice: 处理后的发票信息字典
+    """
+    lock.acquire(timeout=3)
+    try:
+        # 使用 ultralytics YOLO 进行推理
+        results = model.predict(
+            source=img_numpy,
+            imgsz=pub_img_size,
+            device=device
+        )
+    finally:
+        lock.release()
+
+    # 获取类别名称和检测结果
+    names = model.names
+    im0 = img_numpy
+    ocr = context.ocr
+
+    # 处理检测结果 (ultralytics 返回的是 Results 对象列表)
+    if results and len(results) > 0:
+        result = results[0]  # 取第一个结果
+        boxes = result.boxes  # Boxes 对象
+
+        if boxes is not None and len(boxes) > 0:
+            labels = {}
+
+            # 遍历所有检测框
+            for box in boxes:
+                # 获取坐标、置信度和类别
+                xyxy = box.xyxy[0].cpu().numpy()  # [x1, y1, x2, y2]
+                conf = box.conf[0].item()
+                cls = int(box.cls[0].item())
+
+                label = names[cls]
+                if label not in converter.keys():
+                    continue
+
+                # 前两个控制竖向坐标，后两个控制横向
+                x1, y1, x2, y2 = int(xyxy[0]), int(xyxy[1]), int(xyxy[2]), int(xyxy[3])
+                newimg_list = [y1 - 5, y2 + 5, x1 - 12, x2 + 12]
+
+                # 处理重复的 check_code
+                if label == 'check_code' and label in labels:
+                    label = 'check_code2'
+
+                # 特殊处理 buy_bank
+                if label == 'buy_bank':
+                    type = ocr(im0[y1 - 5:y2 + 5, x1 - 100:x1])
+                    if '电话' in type:
+                        labels["buy_addr"] = newimg_list
+                        continue
+
+                # 保存检测区域图像（如果配置了）
+                if config.SaveImg:
+                    invoice_fp = os.path.join('images', 'invoice')
+                    os.makedirs(invoice_fp, exist_ok=True)
+                    path = os.path.join(invoice_fp, '%s.png' % label)
+                    cv2.imwrite(path, im0[newimg_list[0]:newimg_list[1], newimg_list[2]:newimg_list[3]])
+
+                labels[label] = newimg_list
+            # 扩展发票号码区域
+            if 'invoice_number' in labels and ('invoice_code' not in labels or 'invoice_number2' not in labels):
+                labels['invoice_number'][3] += 48
+
+            # 将标签坐标转换为实际图像区域
+            labels = {key: im0[newimg_list[0]:newimg_list[1], newimg_list[2]:newimg_list[3]]
+                      for key, newimg_list in labels.items()}
+
+            has_qrcode = False
+            # 处理二维码
+            if labels.__contains__('qrcode'):
+                has_qrcode = qrcode_pyzbar(labels.get('qrcode'), invoice)
+                if has_qrcode:
+                    if invoice.get('invoice_type') == '32':
+                        title = '电子发票（普通发票）'
+                    elif invoice.get('invoice_type') == '31':
+                        title = '电子发票（专用发票）'
+                    else:
+                        title = ocr(labels.get('title'))
+                    invoice['title'] = title
+
+                    if invoice.get('invoice_type') in ['01', '04']:
+                        invoice['amount_with_tax'] = get_float(ocr(labels.get('amount_with_tax')))
+                        invoice['tax'] = get_float(ocr(labels.get('tax')).replace('★', '').replace('*', ''))
+
+                    if invoice.get('invoice_type') in ['31', '32']:
+                        invoice['total_amount'] = get_float(ocr(labels.get('total')))
+                        invoice['tax'] = get_float(ocr(labels.get('tax')).replace('★', '').replace('*', ''))
+
+                    if config.ocrRange == 'complex':
+                        for label, newimg in labels.items():
+                            if label.startswith(('buy_', 'sale_')):
+                                invoice[converter[label]] = ocr_buy_sale(ocr, label, newimg)
+                            elif label.startswith('seal_'):
+                                # 印章识别（通常无需OCR，只需检测）
+                                invoice[converter[label]] = "detected"
+
+            # 没有二维码时的处理
+            if not has_qrcode:
+                for label, newimg in labels.items():
+                    if label == 'qrcode':
+                        continue
+
+                    if label in ('check_code', 'check_code2'):
+                        text = ocr(newimg)
+                    elif label in ('invoice_number', 'invoice_number2'):
+                        text = get_num(ocr(newimg))
+                    elif label in ('invoice_code2', 'invoice_code'):
+                        text = get_num(ocr(newimg))[-12:]
+                    elif label == 'bill_date':
+                        text = get_date(ocr(newimg))
+                    elif label in ('total', 'amount_with_tax', 'tax'):
+                        text = get_float(ocr(newimg).replace('★', '').replace('*', '') or "")
+                    elif label.startswith(('buy_', 'sale_')):
+                        text = ocr_buy_sale(ocr, label, newimg)
+                    elif label.startswith('seal_'):
+                        # 印章识别（通常无需OCR，只需检测）
+                        text = "detected"
+                    else:
+                        text = ocr(newimg).strip()
+
+                    invoice[converter[label]] = text
+
+                # 判断发票类型
+                title = invoice.get('title')
+                if not title and 'title' in labels:
+                    if invoice.get('check_code'):
+                        invoice['title'] = title = '增值税普通发票'
+                    else:
+                        invoice['title'] = title = '增值税专用发票'
+                judge_invoice_type(title, invoice)
+
+            # 税额计算
+            if "¥ 0.00" == invoice.get('tax'):
+                comp = re.compile('-?[0-9]\d*\.*')
+                total_amount = float(''.join(list(''.join(comp.findall(invoice.get('total_amount'))))))
+                amount_with_tax = float(''.join(list(''.join(comp.findall(invoice.get('amount_with_tax'))))))
+                invoice['tax'] = '¥ {}'.format(round(total_amount - amount_with_tax, 2))
+
+            # 处理负数税额
+            if '-' not in invoice.get('tax') and (
+                    '-' in invoice.get('total_amount') or '-' in invoice.get('amount_with_tax')):
+                invoice['tax'] = invoice['tax'].replace('¥ ', '¥ -')
+
+            # 填充缺失字段
+            for val in converter.values():
+                if invoice.get(val) is None:
+                    if val in ('total_amount', 'tax', 'amount_with_tax'):
+                        invoice[val] = '¥ 0.00'
+                    else:
+                        invoice[val] = ""
+
+            invoice['invoice_type_name'] = type_converter_name[invoice['invoice_type']]
+            judge_invoice_repeat_data(invoice)
+
+    return invoice
