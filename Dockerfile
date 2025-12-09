@@ -53,10 +53,7 @@ WORKDIR /app
 
 # 复制依赖文件并安装（利用缓存层）
 COPY --chown=ocruser:ocruser requirements.txt .
-RUN python3 -m pip install --no-cache-dir -r requirements.txt && \
-    python3 -m pip install --no-cache-dir paddleocr paddlepaddle && \
-    python3 -m pip install --no-cache-dir flask-pydantic loguru && \
-    python3 -m pip install --no-cache-dir gunicorn gevent
+RUN python3 -m pip install --no-cache-dir -r requirements.txt
 
 # 复制应用代码
 COPY --chown=ocruser:ocruser . .
