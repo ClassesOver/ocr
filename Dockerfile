@@ -55,10 +55,10 @@ RUN uv venv --python python3.11 /app/.venv && \
 
 # 复制依赖文件并安装（利用缓存层）
 COPY --chown=ocruser:ocruser requirements.txt .
-RUN uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu && \
-    uv pip install -r requirements.txt && \
-    uv pip install -U ultralytics && \
-    chown -R ocruser:ocruser /app/.venv
+RUN uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+RUN uv pip install -r requirements.txt
+RUN uv pip install -U ultralytics
+RUN chown -R ocruser:ocruser /app/.venv
 
 # 复制应用代码
 COPY --chown=ocruser:ocruser . .
