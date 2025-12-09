@@ -40,6 +40,9 @@ RUN ln -sf /usr/bin/python3 /usr/bin/python
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
     install -m 755 /root/.local/bin/uv /usr/local/bin/uv
 
+# 使用 uv 安装 Python 3.11
+RUN uv python install 3.11
+
 # 创建应用目录和非 root 用户
 RUN useradd -m -u 1000 -s /bin/bash ocruser \
     && mkdir -p /app \
@@ -48,8 +51,8 @@ RUN useradd -m -u 1000 -s /bin/bash ocruser \
 # 设置工作目录
 WORKDIR /app
 
-# 使用 uv 创建 Python 虚拟环境（在 root 下创建，然后更改所有权）
-RUN uv venv --python python3.11 /app/.venv && \
+# 使用 uv 创建 Python 3.11 虚拟环境（在 root 下创建，然后更改所有权）
+RUN uv venv --python 3.11 /app/.venv && \
     chown -R ocruser:ocruser /app/.venv
 
 
