@@ -12,13 +12,13 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # 安装系统依赖和 Python 3.11
 RUN apt-get update && \
     apt-get install -y --no-install-recommends software-properties-common && \
-    add-apt-repository ppa:deadsnakes/ppa && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
         python3.11 \
         python3.11-dev \
         python3.11-distutils \
         python3-pip \
+        tzdata \
         libglib2.0-0 \
         libsm6 \
         libxext6 \
@@ -32,7 +32,8 @@ RUN apt-get update && \
         wget \
         curl \
         git \
-        ca-certificates
+        ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 
 # 设置 Python 3.11 为默认版本
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 && \
@@ -52,11 +53,10 @@ WORKDIR /app
 
 # 复制依赖文件并安装（利用缓存层）
 COPY --chown=ocruser:ocruser requirements.txt .
-RUN pip3 install -r requirements.txt \
-    && pip3 install paddleocr paddlepaddle \
-    && pip3 install flask-pydantic loguru \
-    && pip3 install gunicorn gevent \
-    && rm -rf /root/.cache/pip
+RUN python3 -m pip install --no-cache-dir -r requirements.txt && \
+    python3 -m pip install --no-cache-dir paddleocr paddlepaddle && \
+    python3 -m pip install --no-cache-dir flask-pydantic loguru && \
+    python3 -m pip install --no-cache-dir gunicorn gevent
 
 # 复制应用代码
 COPY --chown=ocruser:ocruser . .
