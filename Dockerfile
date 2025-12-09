@@ -10,38 +10,35 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
 # 安装系统依赖和 Python 3.11
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    software-properties-common \
-    && add-apt-repository ppa:deadsnakes/ppa \
-    && apt-get update && apt-get install -y --no-install-recommends \
-    python3.11 \
-    python3.11-dev \
-    python3.11-distutils \
-    python3-pip \
-    # OpenCV 依赖
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender-dev \
-    libgomp1 \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
-    # 图像处理依赖
-    libjpeg-dev \
-    libpng-dev \
-    libtiff-dev \
-    libwebp-dev \
-    # 其他工具
-    wget \
-    curl \
-    git \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends software-properties-common && \
+    add-apt-repository ppa:deadsnakes/ppa && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        python3.11 \
+        python3.11-dev \
+        python3.11-distutils \
+        python3-pip \
+        libglib2.0-0 \
+        libsm6 \
+        libxext6 \
+        libxrender-dev \
+        libgomp1 \
+        libgl1-mesa-glx \
+        libjpeg-dev \
+        libpng-dev \
+        libtiff-dev \
+        libwebp-dev \
+        wget \
+        curl \
+        git \
+        ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 
 # 设置 Python 3.11 为默认版本
-RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
-    && update-alternatives --set python3 /usr/bin/python3.11 \
-    && ln -sf /usr/bin/python3.11 /usr/bin/python
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 && \
+    update-alternatives --set python3 /usr/bin/python3.11 && \
+    ln -sf /usr/bin/python3.11 /usr/bin/python
 
 # 升级 pip
 RUN python3 -m pip install --upgrade pip setuptools wheel
