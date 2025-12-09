@@ -51,9 +51,12 @@ RUN useradd -m -u 1000 -s /bin/bash ocruser \
 # 设置工作目录
 WORKDIR /app
 
+RUN python3 -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
 # 复制依赖文件并安装（利用缓存层）
 COPY --chown=ocruser:ocruser requirements.txt .
 RUN python3 -m pip install --no-cache-dir -r requirements.txt
+RUN python3 -m pip install -U ultralytics
 
 # 复制应用代码
 COPY --chown=ocruser:ocruser . .
