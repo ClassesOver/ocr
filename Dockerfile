@@ -40,8 +40,9 @@ RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
     update-alternatives --set python3 /usr/bin/python3.11 && \
     ln -sf /usr/bin/python3.11 /usr/bin/python
 
-# 升级 pip
-RUN python3 -m pip install --upgrade pip setuptools wheel
+# 安装 uv 到全局位置
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    install -m 755 /root/.cargo/bin/uv /usr/local/bin/uv
 
 # 创建应用目录和非 root 用户
 RUN useradd -m -u 1000 -s /bin/bash ocruser \
@@ -51,12 +52,20 @@ RUN useradd -m -u 1000 -s /bin/bash ocruser \
 # 设置工作目录
 WORKDIR /app
 
-RUN python3 -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+# 使用 uv 创建 Python 3.11 虚拟环境（在 root 下创建，然后更改所有权）
+RUN uv venv --python python3.11 /app/.venv && \
+    chown -R ocruser:ocruser /app/.venv
+
+# 设置虚拟环境为全局 Python 环境
+ENV PATH="/app/.venv/bin:$PATH"
+ENV VIRTUAL_ENV="/app/.venv"
 
 # 复制依赖文件并安装（利用缓存层）
 COPY --chown=ocruser:ocruser requirements.txt .
-RUN python3 -m pip install --no-cache-dir -r requirements.txt
-RUN python3 -m pip install -U ultralytics
+RUN uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu && \
+    uv pip install -r requirements.txt && \
+    uv pip install -U ultralytics && \
+    chown -R ocruser:ocruser /app/.venv
 
 # 复制应用代码
 COPY --chown=ocruser:ocruser . .
