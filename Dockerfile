@@ -14,10 +14,6 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends software-properties-common && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
-        python3.11 \
-        python3.11-dev \
-        python3.11-distutils \
-        python3-pip \
         tzdata \
         libglib2.0-0 \
         libsm6 \
@@ -34,11 +30,6 @@ RUN apt-get update && \
         git \
         ca-certificates && \
     rm -rf /var/lib/apt/lists/*
-
-# 设置 Python 3.11 为默认版本
-RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 && \
-    update-alternatives --set python3 /usr/bin/python3.11 && \
-    ln -sf /usr/bin/python3.11 /usr/bin/python
 
 # 安装 uv 到全局位置
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
