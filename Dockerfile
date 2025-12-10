@@ -59,6 +59,7 @@ COPY requirements.txt .
 RUN uv pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu && \
     uv pip install --no-cache-dir -r requirements.txt && \
     uv pip install --no-cache-dir -U ultralytics && \
+    uv pip install --no-cache-dir -U gunicorn && \
     uv cache prune
 
 # 复制应用代码
