@@ -66,8 +66,6 @@ RUN ln -sf /app/.venv/bin/python /usr/local/bin/python && \
 
 RUN paddleocr install_hpi_deps cpu
 
-# 复制应用代码
-COPY . .
 
 # 暴露端口
 EXPOSE 8078

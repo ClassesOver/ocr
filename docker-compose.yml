@@ -10,5 +10,6 @@ services:
     environment:
       - TZ=Asia/Shanghai
     volumes:
-      - ./:/app/code
-      - ./logs:/app/logs
+      - code/:/app/code
+      - logs:/app/logs
+      - models:/root/.paddlex/official_models
