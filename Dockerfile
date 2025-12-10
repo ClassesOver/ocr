@@ -59,13 +59,12 @@ RUN uv pip install --no-cache-dir torch torchvision --index-url https://download
     uv pip install --no-cache-dir -U ultralytics && \
     uv pip install --no-cache-dir -U gunicorn && \
     uv pip install --no-cache-dir -U pip && \
-    uv cache prune \
-
+    uv cache prune 
 
 # 将虚拟环境解释器设为全局默认
 RUN ln -sf /app/.venv/bin/python /usr/local/bin/python && \
     ln -sf /app/.venv/bin/pip /usr/local/bin/pip
-    
+
 RUN paddleocr install_hpi_deps cpu
 
 # 复制应用代码
