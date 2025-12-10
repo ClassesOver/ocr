@@ -1,5 +1,6 @@
 from ultralytics import YOLO
 import numpy as np
+import re
 import cv2
 import threading
 import os
@@ -129,23 +130,62 @@ def judge_invoice_repeat_data(invoice):
 def ocr_buy_sale(ocr, label, img):
     """
     识别购买方/销售方信息
-    
+
     Args:
         ocr: OCR 识别方法
         label: 字段标签
         img: 图像区域
-        
+
     Returns:
         识别的文本
     """
-    text = ocr(img)
+    raw = ocr(img) or ""
+    text = raw.strip()
+
+    # 统一分隔符，便于规则匹配
+    normalized = text.replace('：', ':').replace('，', ',').replace('；', ';')
+
+    # 税号 / 名称保持原有逻辑
     if label in ('buy_tax', 'sale_tax'):
-        text = get_tax(text)
+        return get_tax(text)
     if label in ('buy_title', 'sale_title'):
-        text = get_title(text)
-    else:
-        text = get_addr_bank(text)
-    return text.strip()
+        return get_title(text)
+
+    def extract_addr(src: str):
+        # 去掉常见前缀
+        s = re.sub(r'^\s*(地址|单位地址|购方地址|销方地址|地址、电话)[:：]?\s*', '', src)
+        # 截断到电话/开户行/账号前
+        s = re.split(r'(电话|开户行|账号|银行|Bank)', s, maxsplit=1)[0]
+        # 去除 OCR 误识别带来的干扰符号，仅保留地址常用字符
+        s = re.sub(r'[★☆※*•·●⊙◎¤■◆◇▪▎▏▍▌▋▊▉|｜~`^_=+<>《》〈〉【】\[\]{}（）()]', '', s)
+        s = re.sub(r'[，,;；]+', '，', s)  # 统一分隔符
+        s = re.sub(r'\s+', ' ', s)       # 压缩多余空格
+        return s.strip(' ，;；')
+
+    def extract_bank(src: str):
+        s = re.sub(r'^\s*(开户行及账号|开户行|账号|银行)[:：]?\s*', '', src)
+        # 去除 OCR 干扰符号，保留银行名称/账号常用字符
+        s = re.sub(r'[★☆※*•·●⊙◎¤■◆◇▪▎▏▍▌▋▊▉|｜~`^_=+<>《》〈〉【】\[\]{}（）()]', '', s)
+        s = re.sub(r'[，,;；]+', '，', s)  # 统一分隔符
+        s = re.sub(r'\s+', ' ', s).strip(' ，;；')
+        # 提取账号数字（允许空格/逗号分隔）
+        account = ''.join(re.findall(r'\d', s))
+        # 去掉账号部分得到银行名称
+        name_part = re.split(r'\d', s, maxsplit=1)[0].strip(' ,;')
+        if account and name_part:
+            return f'{name_part} {account}'
+        if account:
+            return account
+        return s.strip()
+
+    if label in ('buy_addr', 'sale_addr'):
+        return extract_addr(normalized)
+    if label in ('buy_bank', 'sale_bank'):
+        return extract_bank(normalized)
+
+    # 兜底
+    return text
+
 
 
 def invoice_detection(img_numpy, invoice=None, context=None, saveImage=False):
@@ -241,12 +281,12 @@ def invoice_detection(img_numpy, invoice=None, context=None, saveImage=False):
                     invoice['title'] = title
 
                     if invoice.get('invoice_type') in ['01', '04']:
-                        invoice['amount_with_tax'] = get_float(ocr(labels.get('amount_with_tax')))
-                        invoice['tax'] = get_float(ocr(labels.get('tax')).replace('★', '').replace('*', ''))
+                        invoice['amount_with_tax'] = get_amount(ocr(labels.get('amount_with_tax')))
+                        invoice['tax'] = get_amount(ocr(labels.get('tax')))
 
                     if invoice.get('invoice_type') in ['31', '32']:
-                        invoice['total_amount'] = get_float(ocr(labels.get('total')))
-                        invoice['tax'] = get_float(ocr(labels.get('tax')).replace('★', '').replace('*', ''))
+                        invoice['total_amount'] = get_amount(ocr(labels.get('total')))
+                        invoice['tax'] = get_amount(ocr(labels.get('tax')))
 
                     if config.ocrRange == 'complex':
                         for label, newimg in labels.items():
@@ -271,7 +311,7 @@ def invoice_detection(img_numpy, invoice=None, context=None, saveImage=False):
                     elif label == 'bill_date':
                         text = get_date(ocr(newimg))
                     elif label in ('total', 'amount_with_tax', 'tax'):
-                        text = get_float(ocr(newimg).replace('★', '').replace('*', '') or "")
+                        text = get_amount(ocr(newimg))
                     elif label.startswith(('buy_', 'sale_')):
                         text = ocr_buy_sale(ocr, label, newimg)
                     elif label.startswith('seal_'):

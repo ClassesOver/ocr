@@ -63,6 +63,78 @@ def get_float(string):
     except:
         return '¥ 0.00'
 
+def get_amount(string):
+    """
+    提取金额并最大化容错：
+    - 统一全角/半角字符、货币符号与中文“元/圆”
+    - 修正常见 OCR 误识别（O→0、S→5 等）
+    - 支持货币符号在前/后、括号表示负数、末尾减号
+    返回格式统一为 `¥ xx.xx`，找不到有效数字时返回 `¥ 0.00`。
+    """
+    if not string:
+        return '¥ 0.00'
+    try:
+        raw = str(string).strip()
+        # 全角转半角并统一货币/中文符号
+        trans_map = {
+            '０': '0', '１': '1', '２': '2', '３': '3', '４': '4',
+            '５': '5', '６': '6', '７': '7', '８': '8', '９': '9',
+            '，': ',', '．': '.', '－': '-', '＋': '+', '﹣': '-', '–': '-', '—': '-',
+            '￥': '¥', '元': '¥', '圆': '¥', ' ': ''
+        }
+        raw = raw.translate(str.maketrans(trans_map))
+
+        # 常见 OCR 误识别字符替换
+        raw = raw.translate(str.maketrans({
+            'O': '0', 'o': '0', 'D': '0',
+            'S': '5', 'B': '8', 'l': '1', 'I': '1',
+            'Y': '¥'  # 兼容把 ¥ 识别为 Y
+        }))
+
+        # 去掉明显无关的符号（星号、装饰符号、竖线等）
+        raw = re.sub(r'[★☆※*•·●⊙◎¤■◆◇▪▎▏▍▌▋▊▉|｜~`^_=+<>《》〈〉【】\[\]{}（）()]', '', raw)
+        raw = re.sub(r'\s+', '', raw)  # 金额中去除所有空白
+
+        # 负数标记：括号或末尾减号
+        is_bracket_negative = '(' in raw and ')' in raw
+        has_trailing_minus = bool(re.search(r'-\s*$', raw))
+
+        def parse_candidates(pattern):
+            vals = []
+            for m in re.finditer(pattern, raw, flags=re.IGNORECASE):
+                num = m.group(1).replace(',', '')
+                try:
+                    vals.append(float(num))
+                except ValueError:
+                    continue
+            return vals
+
+        # 优先：带货币符号的匹配
+        currency_vals = parse_candidates(r'(?:¥|RMB|CNY)\s*([-+]?\d[\d,]*(?:\.\d+)?)')
+        # 次优：数字后跟货币符号
+        suffix_vals = parse_candidates(r'([-+]?\d[\d,]*(?:\.\d+)?)(?=\s*(?:¥|RMB|CNY))')
+        # 兜底：任意数字串
+        generic_vals = parse_candidates(r'([-+]?\d[\d,]*(?:\.\d+)?)')
+
+        candidates = currency_vals or suffix_vals or generic_vals
+        if not candidates:
+            return '¥ 0.00'
+
+        # 选择最有可能的金额：优先最后出现的金额，其次绝对值最大
+        value = candidates[-1]
+        if len(candidates) > 1 and abs(max(candidates, key=abs)) != abs(value):
+            # 如果列表里有更大的绝对值，则用最大绝对值防止截取错位
+            value = max(candidates, key=abs)
+
+        if is_bracket_negative and value > 0:
+            value = -value
+        if has_trailing_minus and value > 0:
+            value = -value
+
+        return f'¥ {value:.2f}'
+    except Exception:
+        return '¥ 0.00'
+
 
 def get_page(string):
     try:
@@ -79,7 +151,24 @@ def get_page(string):
 
 def get_date(string):
     try:
-        date_str = get_num(string)
+        raw = str(string).strip()
+        # 统一全角/半角并修正常见 OCR 误识别，去掉无关符号
+        trans_map = {
+            '０': '0', '１': '1', '２': '2', '３': '3', '４': '4',
+            '５': '5', '６': '6', '７': '7', '８': '8', '９': '9',
+            '－': '-', '–': '-', '—': '-', '﹣': '-', '／': '/', '。': '.',
+            '年': None, '月': None, '日': None, '号': None,
+            ' ': None, '\t': None, '\n': None
+        }
+        raw = raw.translate(str.maketrans(trans_map))
+        raw = raw.translate(str.maketrans({
+            'O': '0', 'o': '0', 'D': '0',
+            '|': '1', 'I': '1', 'l': '1'
+        }))
+        raw = re.sub(r'[★☆※*•·●⊙◎¤■◆◇▪▎▏▍▌▋▊▉|｜~`^_=+<>《》〈〉【】\[\]{}（）()]', '', raw)
+        raw = re.sub(r'\s+', '', raw)
+
+        date_str = get_num(raw)
         date_len = len(date_str)
         if date_len < 8:
             curr_date = date.today().strftime('%Y%m%d')
