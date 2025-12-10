@@ -10,5 +10,5 @@ services:
     environment:
       - TZ=Asia/Shanghai
     volumes:
+      - ./:/app/code
       - ./logs:/app/logs
-      - ./models:/app/models:ro

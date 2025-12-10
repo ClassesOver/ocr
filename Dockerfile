@@ -39,10 +39,7 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
 RUN uv python install 3.11
 
 # 创建应用目录
-RUN mkdir -p /app
-
-# 设置工作目录
-WORKDIR /app
+RUN mkdir -p /app/code
 
 # 使用 uv 创建 Python 3.11 虚拟环境
 RUN uv venv --python 3.11 /app/.venv
@@ -51,6 +48,8 @@ RUN uv venv --python 3.11 /app/.venv
 ENV PATH="/app/.venv/bin:$PATH" \
     VIRTUAL_ENV="/app/.venv"
 
+# 设置工作目录
+WORKDIR /app/code
 
 # 复制依赖文件并安装（利用缓存层）
 COPY requirements.txt .
