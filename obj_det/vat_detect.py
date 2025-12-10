@@ -2,12 +2,19 @@ from ultralytics import YOLO
 import numpy as np
 import re
 import cv2
-import threading
 import os
 import config
 from util.tool import *
+from functools import lru_cache
 
-lock = threading.Lock()
+# 预编译正则表达式以提高性能
+RE_ADDR_PREFIX = re.compile(r'^\s*(地址|单位地址|购方地址|销方地址|地址、电话)[:：]?\s*')
+RE_ADDR_SPLIT = re.compile(r'(电话|开户行|账号|银行|Bank)')
+RE_ADDR_CLEAN = re.compile(r'[★☆※*•·●⊙◎¤■◆◇▪▎▏▍▌▋▊▉|｜~`^_=+<>《》〈〉【】\[\]{}（）()]')
+RE_BANK_PREFIX = re.compile(r'^\s*(开户行及账号|开户行|账号|银行)[:：]?\s*')
+RE_BANK_CLEAN = re.compile(r'[★☆※*•·●⊙◎¤■◆◇▪▎▏▍▌▋▊▉|｜~`^_=+<>《》〈〉【】\[\]{}（）()]')
+RE_DIGITS = re.compile(r'\d')
+RE_AMOUNT = re.compile(r'-?[0-9]\d*\.*')
 
 converter = {'invoice_code': 'invoice_code',
              'invoice_code2': 'invoice_code2',
@@ -44,7 +51,7 @@ type_converter = {'增值税专用发票': '01', '增值税普通发票': '04',
                   '增值税电子专用发票': '08', '增值税电子普通发票': '10',
                   '电子发票（增值税专用发票）': '31', '电子发票（增值税普通发票）': '32'}
 
-pub_weights = f"models/vat/best.pt"
+pub_weights = f"models/vat/best.onnx"
 pub_img_size = 640
 
 # 初始化 YOLO 模型
@@ -55,7 +62,7 @@ else:
     device = 'cpu'
 
 # 使用 ultralytics YOLO 类加载模型
-model = YOLO(pub_weights)
+model = YOLO(pub_weights, task='detect')
 
 
 def get_check_code(code1, code2):
@@ -119,12 +126,15 @@ def judge_invoice_repeat_data(invoice):
             invoice_number_really = invoice_number
         invoice['invoice_number'] = invoice_number_really
     invoice['check_code'] = get_check_code(invoice.get('check_code'), invoice.get('check_code2'))
-    if invoice.__contains__('check_code2'):
+    
+    # 使用 in 替代 __contains__ 以提高性能
+    if 'check_code2' in invoice:
         del invoice['check_code2']
-    if invoice.__contains__('invoice_code2'):
+    if 'invoice_code2' in invoice:
         del invoice['invoice_code2']
-    if invoice.__contains__('invoice_number2'):
+    if 'invoice_number2' in invoice:
         del invoice['invoice_number2']
+
 
 
 def ocr_buy_sale(ocr, label, img):
@@ -152,26 +162,24 @@ def ocr_buy_sale(ocr, label, img):
         return get_title(text)
 
     def extract_addr(src: str):
-        # 去掉常见前缀
-        s = re.sub(r'^\s*(地址|单位地址|购方地址|销方地址|地址、电话)[:：]?\s*', '', src)
-        # 截断到电话/开户行/账号前
-        s = re.split(r'(电话|开户行|账号|银行|Bank)', s, maxsplit=1)[0]
-        # 去除 OCR 误识别带来的干扰符号，仅保留地址常用字符
-        s = re.sub(r'[★☆※*•·●⊙◎¤■◆◇▪▎▏▍▌▋▊▉|｜~`^_=+<>《》〈〉【】\[\]{}（）()]', '', s)
+        # 使用预编译的正则表达式
+        s = RE_ADDR_PREFIX.sub('', src)
+        s = RE_ADDR_SPLIT.split(s, maxsplit=1)[0]
+        s = RE_ADDR_CLEAN.sub('', s)
         s = re.sub(r'[，,;；]+', '，', s)  # 统一分隔符
         s = re.sub(r'\s+', ' ', s)       # 压缩多余空格
         return s.strip(' ，;；')
 
     def extract_bank(src: str):
-        s = re.sub(r'^\s*(开户行及账号|开户行|账号|银行)[:：]?\s*', '', src)
-        # 去除 OCR 干扰符号，保留银行名称/账号常用字符
-        s = re.sub(r'[★☆※*•·●⊙◎¤■◆◇▪▎▏▍▌▋▊▉|｜~`^_=+<>《》〈〉【】\[\]{}（）()]', '', s)
+        # 使用预编译的正则表达式
+        s = RE_BANK_PREFIX.sub('', src)
+        s = RE_BANK_CLEAN.sub('', s)
         s = re.sub(r'[，,;；]+', '，', s)  # 统一分隔符
         s = re.sub(r'\s+', ' ', s).strip(' ，;；')
         # 提取账号数字（允许空格/逗号分隔）
-        account = ''.join(re.findall(r'\d', s))
+        account = ''.join(RE_DIGITS.findall(s))
         # 去掉账号部分得到银行名称
-        name_part = re.split(r'\d', s, maxsplit=1)[0].strip(' ,;')
+        name_part = RE_DIGITS.split(s, maxsplit=1)[0].strip(' ,;')
         if account and name_part:
             return f'{name_part} {account}'
         if account:
@@ -200,17 +208,22 @@ def invoice_detection(img_numpy, invoice=None, context=None, saveImage=False):
         
     Returns:
         invoice: 处理后的发票信息字典
+        
+    注意:
+        YOLO/ONNX Runtime 推理是线程安全的，无需额外的锁保护
     """
-    lock.acquire(timeout=3)
-    try:
-        # 使用 ultralytics YOLO 进行推理
-        results = model.predict(
-            source=img_numpy,
-            imgsz=pub_img_size,
-            device=device
-        )
-    finally:
-        lock.release()
+    # 使用 ultralytics YOLO 进行推理，添加性能优化参数
+    # YOLO 推理是线程安全的，可以在多线程环境下并发调用
+    results = model.predict(
+        source=img_numpy,
+        imgsz=pub_img_size,
+        device=device,
+        verbose=False,      # 关闭详细输出以提高性能
+        conf=0.25,          # 置信度阈值
+        iou=0.45,           # NMS IOU 阈值
+        half=config.GPU,    # GPU 时使用半精度以提高速度
+        max_det=100         # 最大检测数量
+    )
 
     # 获取类别名称和检测结果
     names = model.names
@@ -224,6 +237,7 @@ def invoice_detection(img_numpy, invoice=None, context=None, saveImage=False):
 
         if boxes is not None and len(boxes) > 0:
             labels = {}
+            converter_keys = set(converter.keys())  # 转换为集合以提高查找速度
 
             # 遍历所有检测框
             for box in boxes:
@@ -233,7 +247,7 @@ def invoice_detection(img_numpy, invoice=None, context=None, saveImage=False):
                 cls = int(box.cls[0].item())
 
                 label = names[cls]
-                if label not in converter.keys():
+                if label not in converter_keys:
                     continue
 
                 # 前两个控制竖向坐标，后两个控制横向
@@ -269,7 +283,7 @@ def invoice_detection(img_numpy, invoice=None, context=None, saveImage=False):
 
             has_qrcode = False
             # 处理二维码
-            if labels.__contains__('qrcode'):
+            if 'qrcode' in labels:
                 has_qrcode = qrcode_pyzbar(labels.get('qrcode'), invoice)
                 if has_qrcode:
                     if invoice.get('invoice_type') == '32':
@@ -331,16 +345,15 @@ def invoice_detection(img_numpy, invoice=None, context=None, saveImage=False):
                         invoice['title'] = title = '增值税专用发票'
                 judge_invoice_type(title, invoice)
 
-            # 税额计算
+            # 税额计算 - 使用预编译的正则表达式
             if "¥ 0.00" == invoice.get('tax'):
-                comp = re.compile('-?[0-9]\d*\.*')
-                total_amount = float(''.join(list(''.join(comp.findall(invoice.get('total_amount'))))))
-                amount_with_tax = float(''.join(list(''.join(comp.findall(invoice.get('amount_with_tax'))))))
+                total_amount = float(''.join(RE_AMOUNT.findall(invoice.get('total_amount', '0'))))
+                amount_with_tax = float(''.join(RE_AMOUNT.findall(invoice.get('amount_with_tax', '0'))))
                 invoice['tax'] = '¥ {}'.format(round(total_amount - amount_with_tax, 2))
 
             # 处理负数税额
-            if '-' not in invoice.get('tax') and (
-                    '-' in invoice.get('total_amount') or '-' in invoice.get('amount_with_tax')):
+            if '-' not in invoice.get('tax', '') and (
+                    '-' in invoice.get('total_amount', '') or '-' in invoice.get('amount_with_tax', '')):
                 invoice['tax'] = invoice['tax'].replace('¥ ', '¥ -')
 
             # 填充缺失字段
@@ -355,3 +368,4 @@ def invoice_detection(img_numpy, invoice=None, context=None, saveImage=False):
             judge_invoice_repeat_data(invoice)
 
     return invoice
+

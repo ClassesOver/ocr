@@ -25,11 +25,11 @@ class TextOcrModel(object):
         model_name = getattr(config, "PADDLE_REC_MODEL_NAME", "ch_SVTRv2_rec")
         
         # HPI 配置：通过环境变量控制（默认启用以获得更好性能）
-        enable_hpi_env = os.getenv("PADDLE_ENABLE_HPI", "1").strip().lower()
+        enable_hpi_env = os.getenv("PADDLE_ENABLE_HPI", "").strip().lower()
         enable_hpi = is_linux and enable_hpi_env not in ["0", "false", "no"]
         
         # MKLDNN 配置：Linux 平台下通过环境变量控制（默认：CPU 模式下启用）
-        enable_mkldnn_env = os.getenv("PADDLE_ENABLE_MKLDNN", "1").strip().lower()
+        enable_mkldnn_env = os.getenv("PADDLE_ENABLE_MKLDNN", "").strip().lower()
         if enable_mkldnn_env:
             # 如果设置了环境变量，使用环境变量的值
             enable_mkldnn = is_linux and enable_mkldnn_env in ["1", "true", "yes"]
