@@ -7,6 +7,8 @@ import cv2
 import numpy as np
 import config
 import platform
+import os
+
 
 
 class TextOcrModel(object):
@@ -20,9 +22,20 @@ class TextOcrModel(object):
         # Linux 系统性能更好，Windows 可能不支持或效果不佳
         is_linux = platform.system().lower() == 'linux'
         enable_hpi = is_linux
-        
+
+        # PaddleOCR 识别模型配置：支持通过配置/环境变量切换
+        model_name = getattr(config, "PADDLE_REC_MODEL_NAME", "ch_SVTRv2_rec")
+        model_dir_cfg = getattr(config, "PADDLE_REC_MODEL_DIR", None)
+        model_dir_base = getattr(config, "base_dir", ".")
+        if model_dir_cfg:
+            # 若提供相对路径，拼接到 base_dir；绝对路径则直接使用
+            model_dir = os.path.join(model_dir_base, model_dir_cfg) if not os.path.isabs(model_dir_cfg) else model_dir_cfg
+        else:
+            model_dir = os.path.join(model_dir_base, "models", model_name)
+
         self._paddle_ocr_instance = TextRecognition(
-            model_name="ch_SVTRv2_rec",
+            model_name=model_name,
+            model_dir=model_dir,
             device='gpu' if use_gpu else 'cpu',
             enable_mkldnn=True if not use_gpu else False,  # CPU 优化
             enable_hpi=enable_hpi,  # Linux 系统启用 HPI
