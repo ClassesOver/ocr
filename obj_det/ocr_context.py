@@ -17,35 +17,44 @@ class TextOcrModel(object):
         
         # 优化配置：启用 GPU 和性能优化参数
         use_gpu = config.GPU if hasattr(config, 'GPU') else False
-
+        
         # 根据操作系统决定是否启用 HPI（High Performance Inference）
         is_linux = platform.system().lower() == 'linux'
-        
+
         # PaddleOCR 识别模型配置：支持通过配置/环境变量切换
         model_name = getattr(config, "PADDLE_REC_MODEL_NAME", "ch_SVTRv2_rec")
         
         # HPI 配置：通过环境变量控制（默认启用以获得更好性能）
         enable_hpi_env = os.getenv("PADDLE_ENABLE_HPI", "1").strip().lower()
         enable_hpi = is_linux and enable_hpi_env not in ["0", "false", "no"]
+        
+        # MKLDNN 配置：Linux 平台下通过环境变量控制（默认：CPU 模式下启用）
+        enable_mkldnn_env = os.getenv("PADDLE_ENABLE_MKLDNN", "1").strip().lower()
+        if enable_mkldnn_env:
+            # 如果设置了环境变量，使用环境变量的值
+            enable_mkldnn = is_linux and enable_mkldnn_env in ["1", "true", "yes"]
+        else:
+            # 默认：CPU 模式下启用，GPU 模式下禁用
+            enable_mkldnn = not use_gpu and is_linux
 
         try:
             self._paddle_ocr_instance = TextRecognition(
                 model_name=model_name,
                 device='gpu' if use_gpu else 'cpu',
-                enable_mkldnn=True if not use_gpu else False,  # CPU 优化
+                enable_mkldnn=enable_mkldnn,
                 enable_hpi=enable_hpi,
             )
-            logger.info(f"PaddleOCR 初始化成功: model={model_name}, device={'gpu' if use_gpu else 'cpu'}, hpi={enable_hpi}")
+            logger.info(f"PaddleOCR 初始化成功: model={model_name}, device={'gpu' if use_gpu else 'cpu'}, hpi={enable_hpi}, mkldnn={enable_mkldnn}")
         except Exception as e:
             logger.error(f"PaddleOCR 初始化失败: {e}")
-            # 如果失败，尝试禁用 HPI 重新初始化
+            # 如果失败，尝试禁用 HPI 和 MKLDNN 重新初始化
             self._paddle_ocr_instance = TextRecognition(
                 model_name=model_name,
                 device='gpu' if use_gpu else 'cpu',
-                enable_mkldnn=True if not use_gpu else False,
+                enable_mkldnn=False,
                 enable_hpi=False,  # 失败后禁用 HPI
             )
-            logger.warning("已回退到默认配置（禁用 HPI）")
+            logger.warning("已回退到默认配置（禁用 HPI 和 MKLDNN）")
 
         # 预热：避免首次调用的长延迟（不影响后续性能）
         try:
