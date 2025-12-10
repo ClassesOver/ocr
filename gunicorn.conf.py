@@ -6,7 +6,7 @@ import os
 bind = "0.0.0.0:8078"
 
 # 工作进程数：CPU 核心数 * 2 + 1
-workers = int(os.getenv("GUNICORN_WORKERS", multiprocessing.cpu_count() * 2 + 1))
+workers = int(os.getenv("GUNICORN_WORKERS", multiprocessing.cpu_count() - 1 ))
 
 # 工作模式：sync/gevent/eventlet
 worker_class = os.getenv("GUNICORN_WORKER_CLASS", "sync")
