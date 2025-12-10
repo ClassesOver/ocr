@@ -9,13 +9,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# 安装系统依赖（使用默认 Python 3.10）
+# 安装系统依赖（使用 uv 安装 Python 3.11）
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        python3 \
-        python3-dev \
-        python3-pip \
-        python3-venv \
         tzdata \
         libglib2.0-0 \
         libsm6 \
@@ -31,10 +27,8 @@ RUN apt-get update && \
         curl \
         git \
         ca-certificates && \
+    apt-get clean && \
     rm -rf /var/lib/apt/lists/*
-
-# 创建 python 符号链接
-RUN ln -sf /usr/bin/python3 /usr/bin/python
 
 # 安装 uv 到全局位置
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
@@ -54,17 +48,19 @@ WORKDIR /app
 # 使用 uv 创建 Python 3.11 虚拟环境（在 root 下创建，然后更改所有权）
 RUN uv venv --python 3.11 /app/.venv && \
     chown -R ocruser:ocruser /app/.venv
+    
+ENV VIRTUAL_ENV="/app/.venv"
 
-# 设置虚拟环境为全局 Python 环境
-ENV PATH="/app/.venv/bin:$PATH" \
-    VIRTUAL_ENV="/app/.venv"
+# 将虚拟环境解释器设为全局默认
+RUN ln -sf /app/.venv/bin/python /usr/local/bin/python && \
+    ln -sf /app/.venv/bin/pip /usr/local/bin/pip
 
 # 复制依赖文件并安装（利用缓存层）
 COPY --chown=ocruser:ocruser requirements.txt .
-RUN uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-RUN uv pip install -r requirements.txt
-RUN uv pip install -U ultralytics
-RUN chown -R ocruser:ocruser /app/.venv
+RUN uv pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu && \
+    uv pip install --no-cache-dir -r requirements.txt && \
+    uv pip install --no-cache-dir -U ultralytics && \
+    uv cache prune
 
 # 复制应用代码
 COPY --chown=ocruser:ocruser . .
