@@ -12,6 +12,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # 安装系统依赖（使用 uv 安装 Python 3.11）
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
+        libzbar0 \
         tzdata \
         libglib2.0-0 \
         libsm6 \
