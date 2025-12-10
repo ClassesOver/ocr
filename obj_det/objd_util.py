@@ -146,7 +146,7 @@ def is_stock(stock):
     return is_stock
 
 
-def detection_img(img):
+def detection_img(img, saveImage=False):
     # img = rotate(img)
     invoice = {'invoice_type': ''}
     stock = {}
@@ -164,7 +164,7 @@ def detection_img(img):
         return result
     else:
         try:
-            context.vat(img, invoice, context)
+            context.vat(img, invoice, context, saveImage=saveImage)
         except Exception as e:
             logger.error(traceback.format_exc())
         if invoice['invoice_type']:

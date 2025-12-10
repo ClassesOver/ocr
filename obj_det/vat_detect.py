@@ -2,6 +2,7 @@ from ultralytics import YOLO
 import numpy as np
 import cv2
 import threading
+import os
 import config
 from util.tool import *
 
@@ -147,7 +148,7 @@ def ocr_buy_sale(ocr, label, img):
     return text.strip()
 
 
-def invoice_detection(img_numpy, invoice=None, context=None):
+def invoice_detection(img_numpy, invoice=None, context=None, saveImage=False):
     """
     使用 ultralytics YOLO 进行发票检测和识别
     
@@ -155,6 +156,7 @@ def invoice_detection(img_numpy, invoice=None, context=None):
         img_numpy: 输入图像 (numpy array)
         invoice: 发票信息字典
         context: OCR上下文对象
+        saveImage: 是否保存检测区域图像，默认为 False
         
     Returns:
         invoice: 处理后的发票信息字典
@@ -210,7 +212,7 @@ def invoice_detection(img_numpy, invoice=None, context=None):
                         continue
 
                 # 保存检测区域图像（如果配置了）
-                if config.SaveImg:
+                if saveImage:
                     invoice_fp = os.path.join('images', 'invoice')
                     os.makedirs(invoice_fp, exist_ok=True)
                     path = os.path.join(invoice_fp, '%s.png' % label)

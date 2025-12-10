@@ -69,9 +69,11 @@ def ocr(body: RequestBodyModel):
 def test_ocr():
     list_invoice = []
     storage = request.files['file']
+    # 从请求参数中获取 saveImage，默认为 False
+    saveImage = request.form.get('saveImage', 'false').lower() in ('true', '1', 'yes')
     try:
         base64_data = get_base64_file(storage)
-        ocr_data = detection_img(img_decode(base64.decodebytes(base64_data)))
+        ocr_data = detection_img(img_decode(base64.decodebytes(base64_data)), saveImage=saveImage)
         list_invoice.append({'attachment_id': 1,
                              'success': True,
                              'message': "",
