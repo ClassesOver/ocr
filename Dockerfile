@@ -37,36 +37,32 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
 # 使用 uv 安装 Python 3.11
 RUN uv python install 3.11
 
-# 创建应用目录和非 root 用户
-RUN useradd -m -u 1000 -s /bin/bash ocruser \
-    && mkdir -p /app \
-    && chown -R ocruser:ocruser /app
+# 创建应用目录
+RUN mkdir -p /app
 
 # 设置工作目录
 WORKDIR /app
 
-# 使用 uv 创建 Python 3.11 虚拟环境（在 root 下创建，然后更改所有权）
-RUN uv venv --python 3.11 /app/.venv && \
-    chown -R ocruser:ocruser /app/.venv
-    
-ENV VIRTUAL_ENV="/app/.venv"
+# 使用 uv 创建 Python 3.11 虚拟环境
+RUN uv venv --python 3.11 /app/.venv
+
+# 将虚拟环境加入全局 PATH，设置 VIRTUAL_ENV
+ENV PATH="/app/.venv/bin:$PATH" \
+    VIRTUAL_ENV="/app/.venv"
 
 # 将虚拟环境解释器设为全局默认
 RUN ln -sf /app/.venv/bin/python /usr/local/bin/python && \
     ln -sf /app/.venv/bin/pip /usr/local/bin/pip
 
 # 复制依赖文件并安装（利用缓存层）
-COPY --chown=ocruser:ocruser requirements.txt .
+COPY requirements.txt .
 RUN uv pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu && \
     uv pip install --no-cache-dir -r requirements.txt && \
     uv pip install --no-cache-dir -U ultralytics && \
     uv cache prune
 
 # 复制应用代码
-COPY --chown=ocruser:ocruser . .
-
-# 切换到非 root 用户
-USER ocruser
+COPY . .
 
 # 暴露端口
 EXPOSE 8078
