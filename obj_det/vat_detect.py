@@ -15,6 +15,9 @@ RE_BANK_PREFIX = re.compile(r'^\s*(开户行及账号|开户行|账号|银行)[:
 RE_BANK_CLEAN = re.compile(r'[★☆※*•·●⊙◎¤■◆◇▪▎▏▍▌▋▊▉|｜~`^_=+<>《》〈〉【】\[\]{}（）()]')
 RE_DIGITS = re.compile(r'\d')
 RE_AMOUNT = re.compile(r'-?[0-9]\d*\.*')
+# 预编译用于地址和银行信息处理的正则表达式
+RE_COMMA_NORMALIZE = re.compile(r'[，,;；]+')
+RE_SPACE_NORMALIZE = re.compile(r'\s+')
 
 converter = {'invoice_code': 'invoice_code',
              'invoice_code2': 'invoice_code2',
@@ -137,6 +140,83 @@ def judge_invoice_repeat_data(invoice):
 
 
 
+def extract_addr(text: str) -> str:
+    """
+    提取地址信息（优化版，使用预编译正则）
+    
+    Args:
+        text: 原始文本（已归一化）
+        
+    Returns:
+        提取的地址
+    """
+    s = RE_ADDR_PREFIX.sub('', text)
+    s = RE_ADDR_SPLIT.split(s, maxsplit=1)[0]
+    s = RE_ADDR_CLEAN.sub('', s)
+    s = RE_COMMA_NORMALIZE.sub('，', s)  # 统一分隔符
+    s = RE_SPACE_NORMALIZE.sub(' ', s)   # 压缩多余空格
+    return s.strip(' ，;；')
+
+
+def extract_bank(text: str) -> str:
+    """
+    提取银行信息（优化版，使用预编译正则）
+    
+    Args:
+        text: 原始文本（已归一化）
+        
+    Returns:
+        提取的银行信息
+    """
+    s = RE_BANK_PREFIX.sub('', text)
+    s = RE_BANK_CLEAN.sub('', s)
+    s = RE_COMMA_NORMALIZE.sub('，', s)  # 统一分隔符
+    s = RE_SPACE_NORMALIZE.sub(' ', s).strip(' ，;；')
+    # 提取账号数字（允许空格/逗号分隔）
+    account = ''.join(RE_DIGITS.findall(s))
+    # 去掉账号部分得到银行名称
+    name_part = RE_DIGITS.split(s, maxsplit=1)[0].strip(' ,;')
+    if account and name_part:
+        return f'{name_part} {account}'
+    if account:
+        return account
+    return s.strip()
+
+
+def process_buy_sale_field(label: str, text: str) -> str:
+    """
+    统一处理购买方/销售方字段（消除重复代码）
+    
+    Args:
+        label: 字段标签
+        text: OCR识别的原始文本
+        
+    Returns:
+        处理后的文本
+    """
+    text = text.strip()
+    
+    # 税号处理
+    if label in ('buy_tax', 'sale_tax'):
+        return get_tax(text)
+    
+    # 名称处理
+    if label in ('buy_title', 'sale_title'):
+        return get_title(text)
+    
+    # 地址和银行需要归一化
+    if label in ('buy_addr', 'sale_addr', 'buy_bank', 'sale_bank'):
+        normalized = text.replace('：', ':').replace('，', ',').replace('；', ';')
+        
+        if label in ('buy_addr', 'sale_addr'):
+            return extract_addr(normalized)
+        else:  # buy_bank, sale_bank
+            return extract_bank(normalized)
+    
+    # 其他字段直接返回
+    return text
+
+
 def ocr_buy_sale(ocr, label, img):
     """
     识别购买方/销售方信息
@@ -150,49 +230,7 @@ def ocr_buy_sale(ocr, label, img):
         识别的文本
     """
     raw = ocr(img) or ""
-    text = raw.strip()
-
-    # 统一分隔符，便于规则匹配
-    normalized = text.replace('：', ':').replace('，', ',').replace('；', ';')
-
-    # 税号 / 名称保持原有逻辑
-    if label in ('buy_tax', 'sale_tax'):
-        return get_tax(text)
-    if label in ('buy_title', 'sale_title'):
-        return get_title(text)
-
-    def extract_addr(src: str):
-        # 使用预编译的正则表达式
-        s = RE_ADDR_PREFIX.sub('', src)
-        s = RE_ADDR_SPLIT.split(s, maxsplit=1)[0]
-        s = RE_ADDR_CLEAN.sub('', s)
-        s = re.sub(r'[，,;；]+', '，', s)  # 统一分隔符
-        s = re.sub(r'\s+', ' ', s)       # 压缩多余空格
-        return s.strip(' ，;；')
-
-    def extract_bank(src: str):
-        # 使用预编译的正则表达式
-        s = RE_BANK_PREFIX.sub('', src)
-        s = RE_BANK_CLEAN.sub('', s)
-        s = re.sub(r'[，,;；]+', '，', s)  # 统一分隔符
-        s = re.sub(r'\s+', ' ', s).strip(' ，;；')
-        # 提取账号数字（允许空格/逗号分隔）
-        account = ''.join(RE_DIGITS.findall(s))
-        # 去掉账号部分得到银行名称
-        name_part = RE_DIGITS.split(s, maxsplit=1)[0].strip(' ,;')
-        if account and name_part:
-            return f'{name_part} {account}'
-        if account:
-            return account
-        return s.strip()
-
-    if label in ('buy_addr', 'sale_addr'):
-        return extract_addr(normalized)
-    if label in ('buy_bank', 'sale_bank'):
-        return extract_bank(normalized)
-
-    # 兜底
-    return text
+    return process_buy_sale_field(label, raw)
 
 
 
@@ -218,17 +256,15 @@ def invoice_detection(img_numpy, invoice=None, context=None, saveImage=False):
         source=img_numpy,
         imgsz=pub_img_size,
         device=device,
-        verbose=False,      # 关闭详细输出以提高性能
-        conf=0.25,          # 置信度阈值
-        iou=0.45,           # NMS IOU 阈值
-        half=config.GPU,    # GPU 时使用半精度以提高速度
-        max_det=100         # 最大检测数量
+        verbose=False,      # 禁用详细输出以提升性能
+        half=False          # 根据需要启用半精度（GPU时可设为True）
     )
 
     # 获取类别名称和检测结果
     names = model.names
     im0 = img_numpy
     ocr = context.ocr
+    batch_ocr = context.batch_ocr
 
     # 处理检测结果 (ultralytics 返回的是 Results 对象列表)
     if results and len(results) > 0:
@@ -277,9 +313,30 @@ def invoice_detection(img_numpy, invoice=None, context=None, saveImage=False):
             if 'invoice_number' in labels and ('invoice_code' not in labels or 'invoice_number2' not in labels):
                 labels['invoice_number'][3] += 48
 
+
             # 将标签坐标转换为实际图像区域
             labels = {key: im0[newimg_list[0]:newimg_list[1], newimg_list[2]:newimg_list[3]]
                       for key, newimg_list in labels.items()}
+
+            # 使用batch_ocr批量识别所有labels
+            # 收集所有需要OCR的图像区域
+            ocr_label_keys = []
+            ocr_images = []
+            
+            for label, img_region in labels.items():
+                # 跳过不需要OCR的标签
+                if label in ('qrcode',) or label.startswith('seal_'):
+                    continue
+                ocr_label_keys.append(label)
+                ocr_images.append(img_region)
+            
+            # 批量OCR识别
+            ocr_results_dict = {}
+            if ocr_images:
+                batch_results = batch_ocr(ocr_images)
+                # 将结果映射回对应的标签
+                for label, text in zip(ocr_label_keys, batch_results):
+                    ocr_results_dict[label] = text
 
             has_qrcode = False
             # 处理二维码
@@ -291,50 +348,57 @@ def invoice_detection(img_numpy, invoice=None, context=None, saveImage=False):
                     elif invoice.get('invoice_type') == '31':
                         title = '电子发票（专用发票）'
                     else:
-                        title = ocr(labels.get('title'))
+                        title = ocr_results_dict.get('title', '')
                     invoice['title'] = title
 
                     if invoice.get('invoice_type') in ['01', '04']:
-                        invoice['amount_with_tax'] = get_amount(ocr(labels.get('amount_with_tax')))
-                        invoice['tax'] = get_amount(ocr(labels.get('tax')))
+                        invoice['amount_with_tax'] = get_amount(ocr_results_dict.get('amount_with_tax', ''))
+                        invoice['tax'] = get_amount(ocr_results_dict.get('tax', ''))
 
                     if invoice.get('invoice_type') in ['31', '32']:
-                        invoice['total_amount'] = get_amount(ocr(labels.get('total')))
-                        invoice['tax'] = get_amount(ocr(labels.get('tax')))
+                        invoice['total_amount'] = get_amount(ocr_results_dict.get('total', ''))
+                        invoice['tax'] = get_amount(ocr_results_dict.get('tax', ''))
 
                     if config.ocrRange == 'complex':
-                        for label, newimg in labels.items():
+                        for label in labels.keys():
                             if label.startswith(('buy_', 'sale_')):
-                                invoice[converter[label]] = ocr_buy_sale(ocr, label, newimg)
+                                text = ocr_results_dict.get(label, '')
+                                # 使用统一的处理函数（消除重复代码）
+                                invoice[converter[label]] = process_buy_sale_field(label, text)
                             elif label.startswith('seal_'):
                                 # 印章识别（通常无需OCR，只需检测）
                                 invoice[converter[label]] = "detected"
 
             # 没有二维码时的处理
             if not has_qrcode:
-                for label, newimg in labels.items():
+                for label in labels.keys():
                     if label == 'qrcode':
                         continue
+                    
+                    # 从批量识别结果中获取文本
+                    text = ocr_results_dict.get(label, '')
 
+                    # 根据标签类型进行后处理
                     if label in ('check_code', 'check_code2'):
-                        text = ocr(newimg)
+                        processed_text = text
                     elif label in ('invoice_number', 'invoice_number2'):
-                        text = get_num(ocr(newimg))
+                        processed_text = get_num(text)
                     elif label in ('invoice_code2', 'invoice_code'):
-                        text = get_num(ocr(newimg))[-12:]
+                        processed_text = get_num(text)[-12:]
                     elif label == 'bill_date':
-                        text = get_date(ocr(newimg))
+                        processed_text = get_date(text)
                     elif label in ('total', 'amount_with_tax', 'tax'):
-                        text = get_amount(ocr(newimg))
+                        processed_text = get_amount(text)
                     elif label.startswith(('buy_', 'sale_')):
-                        text = ocr_buy_sale(ocr, label, newimg)
+                        # 使用统一的处理函数（消除重复代码）
+                        processed_text = process_buy_sale_field(label, text)
                     elif label.startswith('seal_'):
                         # 印章识别（通常无需OCR，只需检测）
-                        text = "detected"
+                        processed_text = "detected"
                     else:
-                        text = ocr(newimg).strip()
+                        processed_text = text.strip()
 
-                    invoice[converter[label]] = text
+                    invoice[converter[label]] = processed_text
 
                 # 判断发票类型
                 title = invoice.get('title')

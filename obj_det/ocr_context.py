@@ -27,6 +27,9 @@ class TextOcrModel(object):
         # HPI 配置：通过环境变量控制（默认启用以获得更好性能）
         enable_hpi_env = os.getenv("PADDLE_ENABLE_HPI", "").strip().lower()
         enable_hpi = is_linux and enable_hpi_env not in ["0", "false", "no"]
+
+        # 批处理配置：批量大小（可在 config 中覆盖）
+        self._batch_size = getattr(config, "OCR_BATCH_SIZE", 16)  # 默认批量大小
         
         # MKLDNN 配置：Linux 平台下通过环境变量控制（默认：CPU 模式下启用）
         enable_mkldnn_env = os.getenv("PADDLE_ENABLE_MKLDNN", "").strip().lower()
@@ -43,6 +46,7 @@ class TextOcrModel(object):
                 device='gpu' if use_gpu else 'cpu',
                 enable_mkldnn=enable_mkldnn,
                 enable_hpi=enable_hpi,
+                cpu_threads = max(self._batch_size, 10),
             )
             logger.info(f"PaddleOCR 初始化成功: model={model_name}, device={'gpu' if use_gpu else 'cpu'}, hpi={enable_hpi}, mkldnn={enable_mkldnn}")
         except Exception as e:
@@ -53,6 +57,7 @@ class TextOcrModel(object):
                 device='gpu' if use_gpu else 'cpu',
                 enable_mkldnn=False,
                 enable_hpi=False,  # 失败后禁用 HPI
+                cpu_threads = max(self._batch_size, 10)
             )
             logger.warning("已回退到默认配置（禁用 HPI 和 MKLDNN）")
 
@@ -62,7 +67,7 @@ class TextOcrModel(object):
             _ = self._paddle_ocr_instance.predict(warmup_img)
         except Exception as e:
             logger.debug(f"PaddleOCR 预热失败: {e}")
-        
+
         self.ocr = self._ocr
         self.vat = vat
         # self.stock = stock
@@ -70,6 +75,7 @@ class TextOcrModel(object):
         # 性能优化：图像预处理参数（可在 config 中覆盖）
         self._max_img_size = getattr(config, "OCR_MAX_IMG", 960)  # 最大尺寸
         self._min_img_size = getattr(config, "OCR_MIN_IMG", 32)   # 最小尺寸（过小不缩放）
+
 
 
     def _ocr(self, img, use_paddle_first=True, fallback=True):
@@ -131,21 +137,27 @@ class TextOcrModel(object):
         Returns:
             预处理后的图像
         """
-        if img is None or img.size == 0:
+        if img is None:
+            return None
+        
+        # 检查是否为空数组
+        if not isinstance(img, np.ndarray) or img.size == 0:
             return None
         
         h, w = img.shape[:2]
-        
         
         # 如果图像过小，不处理，避免过度放大
         if h < self._min_img_size or w < self._min_img_size:
             return img
 
         # 如果图像过大，缩放以提升速度（默认限制 960，可通过 config 调整）
-        if max(h, w) > self._max_img_size:
-            scale = self._max_img_size / max(h, w)
+        max_dim = max(h, w)
+        if max_dim > self._max_img_size:
+            scale = self._max_img_size / max_dim
             new_h, new_w = int(h * scale), int(w * scale)
+            # 使用 INTER_AREA 进行缩小，速度快且质量好
             img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        
         # 保证内存连续，提高底层推理效率
         if not img.flags['C_CONTIGUOUS']:
             img = np.ascontiguousarray(img)
@@ -164,7 +176,10 @@ class TextOcrModel(object):
         """
         try:
             # 快速空值检查
-            if img is None or img.size == 0:
+            if img is None:
+                return ""
+            
+            if not isinstance(img, np.ndarray) or img.size == 0:
                 return ""
             
             # 图像预处理（加速）
@@ -182,10 +197,105 @@ class TextOcrModel(object):
             return ""
             
         except Exception as e:
-            # 精简异常处理，仅在调试模式记录详细信息
-            if logger.level <= 10:  # DEBUG 级别
-                logger.debug(f"PaddleOCR 识别错误: {e}")
             return ""
+    
+    def _get_paddle_text_batch(self, images):
+        """
+        PaddleOCR 批量识别辅助函数（性能优化版）
+        
+        Args:
+            images: 图像列表
+            
+        Returns:
+            识别结果列表
+            
+        优化项：
+        1. 使用 PaddleOCR 原生批处理能力
+        2. 列表推导式优化
+        3. 减少函数调用和检查
+        4. 优化内存使用
+        """
+        # 快速空值检查
+        if not images:
+            return []
+        
+        try:
+            # 批量预处理图像 - 使用列表推导式
+            processed_data = [
+                (idx, self._preprocess_image(img))
+                for idx, img in enumerate(images)
+                if img is not None and isinstance(img, np.ndarray) and img.size > 0
+            ]
+            
+            # 如果没有有效图像，快速返回
+            if not processed_data:
+                return [""] * len(images)
+            
+            # 分离索引和处理后的图像
+            valid_indices, processed_images = zip(*[
+                (idx, img) for idx, img in processed_data if img is not None
+            ])
+            
+            # 批量执行识别（PaddleOCR 原生支持）
+            batch_results = self._paddle_ocr_instance.predict(list(processed_images))
+            
+            # 构建结果列表 - 使用字典映射优化查找
+            result_map = {
+                idx: batch_results[i].get('rec_text', '')
+                for i, idx in enumerate(valid_indices)
+                if i < len(batch_results)
+            }
+            
+            # 返回完整结果列表
+            return [result_map.get(i, '') for i in range(len(images))]
+            
+        except Exception as e:
+            return [""] * len(images)
+    
+    def batch_ocr(self, images, use_paddle_first=True, batch_size=None):
+        """
+        批量 OCR 识别
+        
+        Args:
+            images: 图像列表
+            use_paddle_first: 是否优先使用 PaddleOCR (默认 True)
+            batch_size: 批量大小，None 则使用默认配置（仅PaddleOCR使用）
+            
+        Returns:
+            识别结果列表
+            
+        优化说明：
+        - PaddleOCR: 使用原生批处理，显著提升吞吐量
+        - ChineseOCR: 逐个处理图像
+        """
+        if not images:
+            return []
+        
+        try:
+            if use_paddle_first:
+                # 使用 PaddleOCR 批处理
+                effective_batch_size = batch_size if batch_size is not None else self._batch_size
+                all_results = []
+                
+                for i in range(0, len(images), effective_batch_size):
+                    batch = images[i:i + effective_batch_size]
+                    batch_results = self._get_paddle_text_batch(batch)
+                    all_results.extend(batch_results)
+                
+                return all_results
+            else:
+                # 使用 ChineseOCR（逐个处理）
+                results = []
+                for img in images:
+                    try:
+                        results.append(self._chinese_ocr_instance(img) if img is not None else "")
+                    except:
+                        results.append("")
+                return results
+                
+        except Exception as e:
+            logger.error(f"批量 OCR 识别错误: {e}")
+            return [""] * len(images)
 
 
 context = TextOcrModel()

@@ -13,6 +13,42 @@ from datetime import date, datetime
 from PIL import Image, ImageEnhance
 import pyzbar.pyzbar as pyzbar
 
+# ============================================
+# 预编译正则表达式以提高性能
+# ============================================
+RE_NUM = re.compile(r'-?[0-9]\d*')
+RE_TAX = re.compile(r'-?[0-9]\d*[a-zA-Z]*')
+RE_TITLE = re.compile(r'-?[^:：]*')
+RE_ADDR_BANK = re.compile(r'[0-9\-]*$')
+RE_FLOAT = re.compile(r'-?[0-9]\d*\.*')
+RE_PAGE = re.compile(r'第(.*)页/共(.*)页')
+
+# 金额提取相关的预编译正则
+RE_AMOUNT_CURRENCY = re.compile(r'(?:¥|RMB|CNY)\s*([-+]?\d[\d,]*(?:\.\d+)?)', flags=re.IGNORECASE)
+RE_AMOUNT_SUFFIX = re.compile(r'([-+]?\d[\d,]*(?:\.\d+)?)(?=\s*(?:¥|RMB|CNY))', flags=re.IGNORECASE)
+RE_AMOUNT_GENERIC = re.compile(r'([-+]?\d[\d,]*(?:\.\d+)?)', flags=re.IGNORECASE)
+RE_AMOUNT_CLEAN = re.compile(r'[★☆※*•·●⊙◎¤■◆◇▪▎▏▍▌▋▊▉|｜~`^_=+<>《》〈〉【】\[\]{}（）()]')
+RE_AMOUNT_TRAILING_MINUS = re.compile(r'-\s*$')
+
+# 日期提取相关的预编译正则
+RE_DATE_CLEAN = re.compile(r'[★☆※*•·●⊙◎¤■◆◇▪▎▏▍▌▋▊▉|｜~`^_=+<>《》〈〉【】\[\]{}（）()]')
+
+# 全角转半角映射表（预构建以提高性能）
+FULLWIDTH_TO_HALFWIDTH = str.maketrans({
+    '０': '0', '１': '1', '２': '2', '３': '3', '４': '4',
+    '５': '5', '６': '6', '７': '7', '８': '8', '９': '9',
+    '，': ',', '．': '.', '－': '-', '﹣': '-', '–': '-', '—': '-',
+    '／': '/', '。': '.',
+    '￥': '¥', '元': '¥', '圆': '¥', ' ': ''
+})
+
+# OCR误识别字符映射表
+OCR_CORRECTION_MAP = str.maketrans({
+    'O': '0', 'o': '0', 'D': '0',
+    'S': '5', 'B': '8', 'l': '1', 'I': '1', 'i': '1',
+    'Y': '¥'
+})
+
 
 def convert2yolov5(size, box):
     x_center = (box[0] + box[2]) / 2.0
@@ -27,46 +63,53 @@ def convert2yolov5(size, box):
 
 
 def get_num(string):
-    string.replace('l', '1').replace('I', '1').replace('i', '1')
-    comp = re.compile('-?[0-9]\d*')
-    return ''.join(comp.findall(string))
+    """提取数字（优化版，使用预编译正则）"""
+    string = string.replace('l', '1').replace('I', '1').replace('i', '1')
+    return ''.join(RE_NUM.findall(string))
 
 
 def get_tax(string):
-    comp = re.compile('-?[0-9]\d*[a-zA-Z]*')
-    return ''.join(comp.findall(string))
+    """提取税号（优化版，使用预编译正则）"""
+    return ''.join(RE_TAX.findall(string))
 
 
 def get_title(string):
-    comp = re.compile('-?[^:：]*')
-    return ''.join(comp.findall(string))
+    """提取标题（优化版，使用预编译正则）"""
+    return ''.join(RE_TITLE.findall(string))
 
 
 def get_addr_bank(string):
-    comp = re.compile('[0-9\-]*$')
-    pre = comp.split(string.replace(':', '').replace('：', ''))[0]
-    return f'{pre} {string[len(pre):]}'
+    """提取地址和银行信息（优化版，使用预编译正则）"""
+    normalized = string.replace(':', '').replace('：', '')
+    pre = RE_ADDR_BANK.split(normalized)[0]
+    return f'{pre} {string[len(pre):]}' if pre else string
 
 
 def get_float(string):
+    """提取浮点数金额（优化版，修复语法错误）"""
     if not string:
         return '¥ 0.00'
     try:
-        comp = re.compile('-?[0-9]\d*\.*')
-        str_list = list(''.join(comp.findall(string)))
-        if str_list[0] == '-' and str_list[1] == '0' and len(str_list) > 2:
+        str_list = list(''.join(RE_FLOAT.findall(string)))
+        if not str_list:
+            return '¥ 0.00'
+        
+        # 修正常见OCR错误
+        if str_list[0] == '-' and len(str_list) > 2 and str_list[1] == '0':
             str_list[1] = '8'
         elif str_list[0] == '0' and len(str_list) > 1:
             str_list[0] = '8'
-
-        return π
-    except:
+        
+        num_str = ''.join(str_list)
+        value = float(num_str) if '.' in num_str else float(num_str)
+        return f'¥ {value:.2f}'
+    except Exception:
         return '¥ 0.00'
 
 def get_amount(string):
     """
-    提取金额并最大化容错：
-    - 统一全角/半角字符、货币符号与中文“元/圆”
+    提取金额并最大化容错（优化版，使用预编译正则和映射表）：
+    - 统一全角/半角字符、货币符号与中文"元/圆"
     - 修正常见 OCR 误识别（O→0、S→5 等）
     - 支持货币符号在前/后、括号表示负数、末尾减号
     返回格式统一为 `¥ xx.xx`，找不到有效数字时返回 `¥ 0.00`。
@@ -75,106 +118,103 @@ def get_amount(string):
         return '¥ 0.00'
     try:
         raw = str(string).strip()
-        # 全角转半角并统一货币/中文符号
-        trans_map = {
-            '０': '0', '１': '1', '２': '2', '３': '3', '４': '4',
-            '５': '5', '６': '6', '７': '7', '８': '8', '９': '9',
-            '，': ',', '．': '.', '－': '-', '＋': '+', '﹣': '-', '–': '-', '—': '-',
-            '￥': '¥', '元': '¥', '圆': '¥', ' ': ''
-        }
-        raw = raw.translate(str.maketrans(trans_map))
-
-        # 常见 OCR 误识别字符替换
-        raw = raw.translate(str.maketrans({
-            'O': '0', 'o': '0', 'D': '0',
-            'S': '5', 'B': '8', 'l': '1', 'I': '1',
-            'Y': '¥'  # 兼容把 ¥ 识别为 Y
-        }))
-
-        # 去掉明显无关的符号（星号、装饰符号、竖线等）
-        raw = re.sub(r'[★☆※*•·●⊙◎¤■◆◇▪▎▏▍▌▋▊▉|｜~`^_=+<>《》〈〉【】\[\]{}（）()]', '', raw)
+        
+        # 使用预构建的映射表进行字符转换（性能优化）
+        raw = raw.translate(FULLWIDTH_TO_HALFWIDTH)
+        raw = raw.translate(OCR_CORRECTION_MAP)
+        
+        # 去掉明显无关的符号（使用预编译正则）
+        raw = RE_AMOUNT_CLEAN.sub('', raw)
         raw = re.sub(r'\s+', '', raw)  # 金额中去除所有空白
-
+        
         # 负数标记：括号或末尾减号
-        is_bracket_negative = '(' in raw and ')' in raw
-        has_trailing_minus = bool(re.search(r'-\s*$', raw))
-
+        is_bracket_negative = '(' in string and ')' in string  # 使用原始字符串检查
+        has_trailing_minus = bool(RE_AMOUNT_TRAILING_MINUS.search(raw))
+        
+        # 使用预编译的正则表达式提取候选值
         def parse_candidates(pattern):
             vals = []
-            for m in re.finditer(pattern, raw, flags=re.IGNORECASE):
+            for m in pattern.finditer(raw):
                 num = m.group(1).replace(',', '')
                 try:
                     vals.append(float(num))
                 except ValueError:
                     continue
             return vals
-
+        
         # 优先：带货币符号的匹配
-        currency_vals = parse_candidates(r'(?:¥|RMB|CNY)\s*([-+]?\d[\d,]*(?:\.\d+)?)')
+        currency_vals = parse_candidates(RE_AMOUNT_CURRENCY)
         # 次优：数字后跟货币符号
-        suffix_vals = parse_candidates(r'([-+]?\d[\d,]*(?:\.\d+)?)(?=\s*(?:¥|RMB|CNY))')
+        suffix_vals = parse_candidates(RE_AMOUNT_SUFFIX)
         # 兜底：任意数字串
-        generic_vals = parse_candidates(r'([-+]?\d[\d,]*(?:\.\d+)?)')
-
+        generic_vals = parse_candidates(RE_AMOUNT_GENERIC)
+        
         candidates = currency_vals or suffix_vals or generic_vals
         if not candidates:
             return '¥ 0.00'
-
+        
         # 选择最有可能的金额：优先最后出现的金额，其次绝对值最大
         value = candidates[-1]
-        if len(candidates) > 1 and abs(max(candidates, key=abs)) != abs(value):
-            # 如果列表里有更大的绝对值，则用最大绝对值防止截取错位
-            value = max(candidates, key=abs)
-
-        if is_bracket_negative and value > 0:
+        if len(candidates) > 1:
+            max_abs_val = max(candidates, key=abs)
+            if abs(max_abs_val) != abs(value):
+                value = max_abs_val
+        
+        # 处理负数
+        if (is_bracket_negative or has_trailing_minus) and value > 0:
             value = -value
-        if has_trailing_minus and value > 0:
-            value = -value
-
+        
         return f'¥ {value:.2f}'
     except Exception:
         return '¥ 0.00'
 
 
 def get_page(string):
+    """提取页码信息（优化版，使用预编译正则）"""
     try:
         string = string.replace('|', '1').replace('I', '1').replace('l', '1')
-        comp = re.search('第(.*)页/共(.*)页', string)
-        return '{0}/{1}'.format(comp.group(1) or 1, comp.group(2) or 1)
-    except:
-        try:
-            comp = re.compile('-?[0-9]\d*')
-            return '{0}/{1}'.format(*comp.findall(string))
-        except:
-            return '-1/-1'
+        match = RE_PAGE.search(string)
+        if match:
+            return f"{match.group(1) or 1}/{match.group(2) or 1}"
+        # 回退方案：提取所有数字
+        nums = RE_NUM.findall(string)
+        if len(nums) >= 2:
+            return f"{nums[0]}/{nums[1]}"
+        return '-1/-1'
+    except Exception:
+        return '-1/-1'
 
 
 def get_date(string):
+    """提取日期（优化版，使用预编译正则和映射表）"""
     try:
         raw = str(string).strip()
-        # 统一全角/半角并修正常见 OCR 误识别，去掉无关符号
-        trans_map = {
-            '０': '0', '１': '1', '２': '2', '３': '3', '４': '4',
-            '５': '5', '６': '6', '７': '7', '８': '8', '９': '9',
-            '－': '-', '–': '-', '—': '-', '﹣': '-', '／': '/', '。': '.',
-            '年': None, '月': None, '日': None, '号': None,
-            ' ': None, '\t': None, '\n': None
-        }
-        raw = raw.translate(str.maketrans(trans_map))
-        raw = raw.translate(str.maketrans({
-            'O': '0', 'o': '0', 'D': '0',
-            '|': '1', 'I': '1', 'l': '1'
-        }))
-        raw = re.sub(r'[★☆※*•·●⊙◎¤■◆◇▪▎▏▍▌▋▊▉|｜~`^_=+<>《》〈〉【】\[\]{}（）()]', '', raw)
+        
+        # 使用预构建的映射表（扩展版，包含日期相关字符）
+        date_trans_map = FULLWIDTH_TO_HALFWIDTH.copy()
+        date_trans_map.update({
+            '年': '', '月': '', '日': '', '号': '',
+            ' ': '', '\t': '', '\n': ''
+        })
+        
+        raw = raw.translate(str.maketrans(date_trans_map))
+        raw = raw.translate(OCR_CORRECTION_MAP)
+        
+        # 去掉无关符号（使用预编译正则）
+        raw = RE_DATE_CLEAN.sub('', raw)
         raw = re.sub(r'\s+', '', raw)
-
+        
+        # 提取数字
         date_str = get_num(raw)
         date_len = len(date_str)
+        
+        # 补全年份
         if date_len < 8:
             curr_date = date.today().strftime('%Y%m%d')
             date_str = curr_date[:8 - date_len] + date_str
+        
         return datetime.strptime(date_str, '%Y%m%d').strftime('%Y年%m月%d日')
-    except:
+    except Exception:
         return string
 
 
