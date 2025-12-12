@@ -60,12 +60,14 @@ RUN uv pip install --no-cache-dir torch torchvision --index-url https://download
     uv pip install --no-cache-dir -U onnx && \
     uv pip install --no-cache-dir -U onnxruntime && \
     uv pip install --no-cache-dir -U pip && \
+    uv pip install --no-cache-dir -U gevent && \
     uv cache prune 
 
 # 将虚拟环境解释器设为全局默认
 RUN ln -sf /app/.venv/bin/python /usr/local/bin/python && \
     ln -sf /app/.venv/bin/pip /usr/local/bin/pip
 
+RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 RUN paddleocr install_hpi_deps cpu
 
 
