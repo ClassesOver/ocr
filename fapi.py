@@ -551,7 +551,6 @@ if __name__ == '__main__':
     
     # 服务器配置
     uvicorn_config = {
-        "app": "fastapi:app",
         "host": "0.0.0.0",
         "port": 8079,
         "reload": False,  # 生产环境设为False
@@ -562,4 +561,4 @@ if __name__ == '__main__':
     }
     
     logger.info(f"启动OCR FastAPI服务 - 端口: {uvicorn_config['port']}")
-    uvicorn.run(**uvicorn_config)
+    uvicorn.run(app, **uvicorn_config)
