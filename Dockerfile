@@ -67,7 +67,6 @@ RUN uv pip install --no-cache-dir torch torchvision --index-url https://download
 RUN ln -sf /app/.venv/bin/python /usr/local/bin/python && \
     ln -sf /app/.venv/bin/pip /usr/local/bin/pip
 
-RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 RUN paddleocr install_hpi_deps cpu
 
 

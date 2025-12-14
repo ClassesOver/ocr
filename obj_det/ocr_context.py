@@ -1,13 +1,24 @@
 from obj_det.vat_detect import invoice_detection as vat
 # from obj_det.v1.stock_detect import stock_detection_image as stock
 from settings import ocr_predict
-from paddleocr import TextRecognition
+from paddleocr import TextRecognition as _TextRecognition
 from loguru import logger
 import cv2
 import numpy as np
 import config
 import platform
 import os
+
+class TextRecognition(_TextRecognition):
+
+    def _get_extra_paddlex_predictor_init_args(self):
+        res =  super()._get_extra_paddlex_predictor_init_args()
+        res.update({
+            'hpi_config': {
+                'backend': 'onnxruntime',
+            }
+        })
+        return res
 
 
 
@@ -25,8 +36,8 @@ class TextOcrModel(object):
         model_name = getattr(config, "PADDLE_REC_MODEL_NAME", "ch_SVTRv2_rec")
         
         # HPI 配置：通过环境变量控制（默认启用以获得更好性能）
-        enable_hpi_env = os.getenv("PADDLE_ENABLE_HPI", "").strip().lower()
-        enable_hpi = is_linux and enable_hpi_env not in ["0", "false", "no"]
+        enable_hpi_env = os.getenv("PADDLE_ENABLE_HPI", "1").strip().lower()
+        enable_hpi = enable_hpi_env not in ["0", "false", "no"]
 
         # 批处理配置：批量大小（可在 config 中覆盖）
         self._batch_size = getattr(config, "OCR_BATCH_SIZE", 16)  # 默认批量大小
