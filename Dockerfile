@@ -57,6 +57,7 @@ RUN uv pip install --no-cache-dir torch torchvision --index-url https://download
     uv pip install --no-cache-dir -r requirements.txt && \
     uv pip install --no-cache-dir -U ultralytics && \
     uv pip install --no-cache-dir -U gunicorn && \
+    uv pip install --no-cache-dir -U gunicorn[] && \
     uv pip install --no-cache-dir -U onnx && \
     uv pip install --no-cache-dir -U onnxruntime && \
     uv pip install --no-cache-dir -U pip && \
