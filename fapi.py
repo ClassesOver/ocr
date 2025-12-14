@@ -3,9 +3,9 @@ import numpy as np
 import cv2
 import requests
 from obj_det.objd_util import detection_img, text_ocr, paddle_ocr
-from fastapi import FastAPI, File, UploadFile, Header, HTTPException, Depends, Form, status
-from fastapi.responses import JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
+from fapi import FastAPI, File, UploadFile, Header, HTTPException, Depends, Form, status
+from fapi.responses import JSONResponse
+from fapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, validator
 from loguru import logger
 import traceback
