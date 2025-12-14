@@ -552,7 +552,7 @@ if __name__ == '__main__':
     # 服务器配置
     uvicorn_config = {
         "host": "0.0.0.0",
-        "port": 8079,
+        "port": 8078,
         "reload": False,  # 生产环境设为False
         "workers": 1,  # 根据CPU核心数调整
         "log_level": "info",
