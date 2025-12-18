@@ -27,7 +27,8 @@ RUN apt-get update && \
         wget \
         curl \
         git \
-        ca-certificates && \
+        ca-certificates \
+        supervisor && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -75,13 +76,15 @@ RUN paddleocr install_hpi_deps cpu
 
 RUN paddlex --install serving
 
-# 复制启动脚本并设置执行权限
-COPY start.sh /app/start.sh
-RUN chmod +x /app/start.sh
-
+# 复制 supervisor 配置文件
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # 暴露端口（Flask 8078, PaddleX 8079）
 EXPOSE 8078 8079
 
-# 启动应用（同时启动 Flask 和 PaddleX）
-CMD ["/app/start.sh"]
+# 设置默认环境变量
+ENV FLASK_PORT=8078
+ENV PADDLEX_PORT=8079
+
+# 启动应用（使用 supervisor 管理 Flask 和 PaddleX）
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

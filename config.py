@@ -66,11 +66,4 @@ ocrModelOpencv = os.path.join(base_dir, "models", "ocr.pb")
 TIMEOUT = 30  # 超时时间
 
 # 是否启用表格识别模块
-ENABLE_TABLE_RECOGNITION = os.getenv("ENABLE_TABLE_RECOGNITION", "0").strip().lower() in ["1", "true", "yes"]
-
-# 是否启用OCR-VL模块
-ENABLE_OCR_VL = os.getenv("ENABLE_OCR_VL", "0").strip().lower() in ["1", "true", "yes"]
-
-# PaddleOCR-VL 配置（可通过环境变量覆盖）
-OCR_VL_BACKEND = os.getenv("OCR_VL_BACKEND", "vllm")  # VL识别后端：native, vllm, vllm-server等
-OCR_VL_REC_SERVER_URL = os.getenv("OCR_VL_REC_SERVER_URL", "http://127.0.0.1:8078/v1")  # VL识别服务器URL
+ENABLE_TABLE_RECOGNITION = os.getenv("ENABLE_TABLE_RECOGNITION", "1").strip().lower() in ["1", "true", "yes"]

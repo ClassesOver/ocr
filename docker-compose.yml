@@ -15,9 +15,6 @@ services:
       - GUNICORN_WORKERS=2
       # OCR模块开关配置
       - ENABLE_TABLE_RECOGNITION=0  # 是否启用表格识别模块
-      - ENABLE_OCR_VL=1             # 是否启用OCR-VL模块
-      # OCR-VL详细配置（可选，仅在ENABLE_OCR_VL=1时生效）
-      - OCR_VL_BACKEND=vllm       # VL识别后端：native, vllm等
     volumes:
       - ./code:/app/code
       - ./logs:/app/logs

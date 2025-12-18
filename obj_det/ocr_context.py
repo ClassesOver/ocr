@@ -4,14 +4,14 @@ from obj_det.stock_detect import stock_detection as stock_v1
 from obj_det.bill_detect import bill_detection as bill
 from settings import ocr_predict
 from paddleocr import TextRecognition as _TextRecognition
-from paddleocr import TableRecognitionPipelineV2 as _TableRecognitionPipelineV2
-from paddleocr import PaddleOCRVL
+from paddleocr import TableRecognitionPipelineV2
 from loguru import logger
 import cv2
 import numpy as np
 import config
 import platform
 import os
+from table_detector import TableDetector, detect_and_process_tables
 
 class TextRecognition(_TextRecognition):
 
@@ -23,18 +23,6 @@ class TextRecognition(_TextRecognition):
             }
         })
         return res
-
-class TableRecognitionPipelineV2(_TableRecognitionPipelineV2):
-
-    def _get_extra_paddlex_predictor_init_args(self):
-        res = super()._get_extra_paddlex_predictor_init_args()
-        res.update({
-            'hpi_config': {
-                'backend': 'onnxruntime',
-            }
-        })
-        return res
-
 
 
 class TextOcrModel(object):
@@ -53,6 +41,7 @@ class TextOcrModel(object):
         # HPI 配置：通过环境变量控制（默认启用以获得更好性能）
         enable_hpi_env = os.getenv("PADDLE_ENABLE_HPI", "").strip().lower()
         enable_hpi = is_linux and enable_hpi_env not in ["0", "false", "no"]
+        self.table_det = TableDetector()
 
         # 批处理配置：批量大小（可在 config 中覆盖）
         self._batch_size = getattr(config, "OCR_BATCH_SIZE", 16)  # 默认批量大小
@@ -113,30 +102,6 @@ class TextOcrModel(object):
         else:
             self.table = None
             logger.info("表格识别模块已禁用（配置：ENABLE_TABLE_RECOGNITION=False）")
-
-        # 根据配置决定是否初始化OCR-VL模块
-        enable_ocr_vl = getattr(config, "ENABLE_OCR_VL", True)
-        if enable_ocr_vl:
-            try:
-                vl_backend = getattr(config, "OCR_VL_BACKEND", "vllm-server")
-                # 构建初始化参数
-                vl_kwargs = {
-                    'vl_rec_backend': vl_backend,
-                    'device': 'gpu' if use_gpu else 'cpu',
-                }
-                if vl_backend == 'vllm-server':
-                    vl_rec_server_url = getattr(config, "OCR_VL_REC_SERVER_URL", "http://127.0.0.1:8078/v1")
-                    vl_kwargs['vl_rec_server_url'] = vl_rec_server_url
-                
-                # 初始化OCR-VL
-                self.ocr_vl = PaddleOCRVL(**vl_kwargs)
-                logger.info(f"OCR-VL模块初始化成功: backend={vl_backend}, device={'gpu' if use_gpu else 'cpu'}")
-            except Exception as e:
-                logger.error(f"OCR-VL模块初始化失败: {e}")
-                self.ocr_vl = None
-        else:
-            self.ocr_vl = None
-            logger.info("OCR-VL模块已禁用（配置：ENABLE_OCR_VL=False）")
 
         self.ocr = self._ocr
         self.vat = vat
@@ -371,13 +336,12 @@ class TextOcrModel(object):
             logger.error(f"批量 OCR 识别错误: {e}")
             return [""] * len(images)
     
-    def table_recognize(self, img, use_vl=True):
+    def table_recognize(self, img):
         """
         表格识别推理
         
         Args:
             img: 输入图像（numpy数组）
-            use_vl: 是否使用OCR_VL模型识别（默认False，使用传统表格识别）
             
         Returns:
             返回字典，包含以下字段：
@@ -385,10 +349,6 @@ class TextOcrModel(object):
                 - rows: 提取的行数据列表
                 - raw_result: 原始识别结果
         """
-        # 如果使用OCR_VL，调用VL识别方法
-        if use_vl and self.ocr_vl is not None:
-            return self.table_recognize_vl(img)
-        
         # 检查表格识别模块是否初始化
         if self.table is None:
             logger.error("表格识别模块未初始化，请在配置中启用 ENABLE_TABLE_RECOGNITION")
@@ -404,16 +364,45 @@ class TextOcrModel(object):
                 logger.warning("table_recognize: 输入图像无效")
                 return {}
             
-            # 图像预处理（可选，根据需要调整）
-            processed_img = self._preprocess_image(img)
-            if processed_img is None:
+            # 图像预处理（表格检测与处理）
+            # 从配置获取预处理参数，提供默认值以保持向后兼容性
+            preprocess_method = getattr(config, 'TABLE_PREPROCESS_METHOD', 'enhanced')
+            straighten_borders = getattr(config, 'TABLE_STRAIGHTEN_BORDERS', True)
+            clean_borders = getattr(config, 'TABLE_CLEAN_BORDERS', True)
+            remove_lines = getattr(config, 'TABLE_REMOVE_LINES', True)
+            
+            try:
+                processed_tables = detect_and_process_tables(
+                    output_dir='op',
+                    image=img,
+                    preprocess_method=preprocess_method,
+                    detector=self.table_det,
+                    straighten_borders=straighten_borders,
+                    clean_borders=clean_borders,
+                    remove_lines=remove_lines
+                )
+            except Exception as e:
+                logger.error(f"表格检测处理失败: {e}")
                 return {}
+            
+            # 检查是否检测到表格
+            if not processed_tables or len(processed_tables) == 0:
+                logger.warning("未检测到表格，返回空结果")
+                return {}
+            
+            # 提取第一个表格的处理结果
+            processed_img = processed_tables[0].get('processed_table')
+            if processed_img is None or not isinstance(processed_img, np.ndarray):
+                logger.warning("表格预处理结果为空或无效")
+                return {}
+            
+            logger.debug(f"表格检测成功，检测到 {len(processed_tables)} 个表格，使用第一个表格进行识别")
             
             # 执行表格识别
             logger.debug(f"开始表格识别，图像尺寸: {processed_img.shape}")
             result = self.table.predict(processed_img,
                                         use_doc_orientation_classify=False,
-                                        use_e2e_wired_table_rec_model=True,
+                                        use_e2e_wireless_table_rec_model=False,
                                         use_doc_unwarping=False,
                                         use_layout_detection=False,
                                         use_table_orientation_classify=False)
@@ -445,167 +434,6 @@ class TextOcrModel(object):
         except Exception as e:
             logger.error(f"表格识别错误: {e}", exc_info=True)
             return {}
-    
-    def table_recognize_vl(self, img):
-        """
-        使用OCR_VL模型进行表格识别
-        
-        Args:
-            img: 输入图像（numpy数组）
-            
-        Returns:
-            返回字典，包含以下字段：
-                - text: OCR_VL识别的文本结果
-                - rows: 提取的行数据列表
-                - raw_result: 原始识别结果
-        """
-        # 检查OCR_VL模块是否初始化
-        if self.ocr_vl is None:
-            logger.error("OCR-VL模块未初始化，请在配置中启用 ENABLE_OCR_VL")
-            return {}
-        
-        try:
-            # 快速空值检查
-            if img is None:
-                logger.warning("table_recognize_vl: 输入图像为空")
-                return {}
-            
-            if not isinstance(img, np.ndarray) or img.size == 0:
-                logger.warning("table_recognize_vl: 输入图像无效")
-                return {}
-            
-            # 图像预处理
-            processed_img = self._preprocess_image(img)
-            if processed_img is None:
-                return {}
-            
-            # 使用OCR_VL进行表格识别
-            logger.debug(f"开始OCR_VL表格识别，图像尺寸: {processed_img.shape}")
-            
-            # OCR_VL通常使用prompt来指定任务
-            prompt = "请识别这个表格，并以结构化格式返回表格内容。"
-            
-            # 调用OCR_VL模型（尝试多种可能的API调用方式）
-            result = self.ocr_vl.predict(processed_img, prompt=prompt)
-            
-            if not result:
-                logger.warning("table_recognize_vl: OCR_VL识别结果为空")
-                return {}
-            
-            # 处理OCR_VL返回的结果
-            # OCR_VL通常返回文本或结构化数据
-            if isinstance(result, str):
-                # 如果是字符串，尝试解析为表格结构
-                text = result
-                rows = self._parse_vl_table_text(text)
-            elif isinstance(result, dict):
-                # 如果是字典，直接使用
-                text = result.get('text', '')
-                rows = result.get('rows', [])
-                if not rows and text:
-                    rows = self._parse_vl_table_text(text)
-            else:
-                text = str(result)
-                rows = self._parse_vl_table_text(text)
-            
-            # 返回结构化数据
-            return {
-                'text': text,
-                'rows': rows,
-                'raw_result': result
-            }
-            
-        except Exception as e:
-            logger.error(f"OCR_VL表格识别错误: {e}", exc_info=True)
-            # 如果OCR_VL失败，可以回退到传统方法
-            logger.warning("OCR_VL识别失败，尝试使用传统表格识别方法")
-            try:
-                return self.table_recognize(img, use_vl=False)
-            except:
-                return {}
-    
-    def _parse_vl_table_text(self, text):
-        """
-        解析OCR_VL返回的表格文本，提取行数据
-        
-        Args:
-            text: OCR_VL返回的文本
-            
-        Returns:
-            行数据列表
-        """
-        try:
-            rows = []
-            if not text:
-                return rows
-            
-            # 按行分割
-            lines = text.split('\n')
-            for line in lines:
-                line = line.strip()
-                if not line:
-                    continue
-                
-                # 尝试按制表符或空格分割单元格
-                # 可以根据实际OCR_VL返回格式调整
-                cells = []
-                if '\t' in line:
-                    # 制表符分隔
-                    cell_texts = line.split('\t')
-                elif '|' in line:
-                    # 管道符分隔（Markdown表格格式）
-                    cell_texts = [cell.strip() for cell in line.split('|') if cell.strip()]
-                else:
-                    # 尝试按多个空格分割
-                    cell_texts = [cell.strip() for cell in line.split('  ') if cell.strip()]
-                    if len(cell_texts) == 1:
-                        # 如果只有一个单元格，按单个空格分割
-                        cell_texts = line.split(' ')
-                
-                # 构建单元格字典
-                for idx, cell_text in enumerate(cell_texts):
-                    cells.append({
-                        'text': cell_text.strip(),
-                        'col': idx
-                    })
-                
-                if cells:
-                    rows.append(cells)
-            
-            return rows
-            
-        except Exception as e:
-            logger.error(f"解析OCR_VL表格文本错误: {e}", exc_info=True)
-            return []
-    
-    def _convert_rows_to_html(self, rows):
-        """
-        将行数据转换为HTML表格格式
-        
-        Args:
-            rows: 行数据列表
-            
-        Returns:
-            HTML字符串
-        """
-        try:
-            if not rows:
-                return ""
-            
-            html_parts = ['<table>']
-            for row in rows:
-                html_parts.append('<tr>')
-                for cell in row:
-                    text = cell.get('text', '') if isinstance(cell, dict) else str(cell)
-                    html_parts.append(f'<td>{text}</td>')
-                html_parts.append('</tr>')
-            html_parts.append('</table>')
-            
-            return ''.join(html_parts)
-            
-        except Exception as e:
-            logger.error(f"转换行数据为HTML错误: {e}", exc_info=True)
-            return ""
     
     def _extract_rows_from_table_ocr_pred(self, table_ocr_pred):
         """
@@ -771,32 +599,6 @@ class TextOcrModel(object):
         except Exception as e:
             logger.error(f"提取表格行文本错误: {e}", exc_info=True)
             return []
-    
-    def batch_table_recognize(self, images, return_html=False):
-        """
-        批量表格识别推理
-
-        Args:
-            images: 图像列表
-            return_html: 是否返回HTML格式（默认False）
-
-        Returns:
-            识别结果列表
-        """
-        if not images:
-            return []
-
-        results = []
-        for idx, img in enumerate(images):
-            try:
-                logger.debug(f"处理第 {idx+1}/{len(images)} 张表格图像")
-                result = self.table_recognize(img, return_html=return_html)
-                results.append(result)
-            except Exception as e:
-                logger.error(f"批量表格识别第 {idx} 张图像失败: {e}")
-                results.append("" if return_html else {})
-        
-        return results
 
 
 context = TextOcrModel()
