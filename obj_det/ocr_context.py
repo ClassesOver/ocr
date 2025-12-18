@@ -93,14 +93,14 @@ class TextOcrModel(object):
             _ = self._paddle_ocr_instance.predict(warmup_img)
         except Exception as e:
             logger.debug(f"PaddleOCR 预热失败: {e}")
-        # self.table = TableRecognitionPipelineV2(device='gpu' if use_gpu else 'cpu',
-        #                                         enable_mkldnn=enable_mkldnn,
-        #                                         use_doc_unwarping=False,
-        #                                         use_layout_detection=False,
-        #                                         text_detection_model_name='PP-OCRv4_mobile_det',
-        #                                         text_recognition_model_name='PP-OCRv4_mobile_rec',
-        #                                         use_doc_orientation_classify=False,
-        #                                         enable_hpi=enable_hpi, )
+        self.table = TableRecognitionPipelineV2(device='gpu' if use_gpu else 'cpu',
+                                                 enable_mkldnn=enable_mkldnn,
+                                                 use_doc_unwarping=False,
+                                                 use_layout_detection=False,
+                                                 text_detection_model_name='PP-OCRv4_mobile_det',
+                                                 text_recognition_model_name='PP-OCRv4_mobile_rec',
+                                                 use_doc_orientation_classify=False,
+                                                 enable_hpi=enable_hpi, )
 
         self.ocr_vl = PaddleOCRVL(vl_rec_backend="native")
 

@@ -8,7 +8,7 @@ bind = os.getenv("GUNICORN_BIND", "0.0.0.0:8078")
 
 # 工作进程数：默认 CPU 核心数 * 2 + 1（适用于 I/O 密集型任务）
 cpu_count = multiprocessing.cpu_count()
-default_workers = max(1, cpu_count * 2 + 1)
+default_workers = max(1, 1)
 workers = int(os.getenv("GUNICORN_WORKERS", default_workers))
 
 # 工作模式：sync/gevent/eventlet/uvicorn

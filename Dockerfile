@@ -72,7 +72,7 @@ RUN ln -sf /app/.venv/bin/python /usr/local/bin/python && \
     ln -sf /app/.venv/bin/pip /usr/local/bin/pip
 
 RUN paddleocr install_hpi_deps cpu
-
+RUN paddlex --install serving
 
 # 暴露端口
 EXPOSE 8078
