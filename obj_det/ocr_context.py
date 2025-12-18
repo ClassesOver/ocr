@@ -93,16 +93,50 @@ class TextOcrModel(object):
             _ = self._paddle_ocr_instance.predict(warmup_img)
         except Exception as e:
             logger.debug(f"PaddleOCR 预热失败: {e}")
-        self.table = TableRecognitionPipelineV2(device='gpu' if use_gpu else 'cpu',
-                                                 enable_mkldnn=enable_mkldnn,
-                                                 use_doc_unwarping=False,
-                                                 use_layout_detection=False,
-                                                 text_detection_model_name='PP-OCRv4_mobile_det',
-                                                 text_recognition_model_name='PP-OCRv4_mobile_rec',
-                                                 use_doc_orientation_classify=False,
-                                                 enable_hpi=enable_hpi, )
+        
+        # 根据配置决定是否初始化表格识别模块
+        enable_table = getattr(config, "ENABLE_TABLE_RECOGNITION", True)
+        if enable_table:
+            try:
+                self.table = TableRecognitionPipelineV2(device='gpu' if use_gpu else 'cpu',
+                                                         enable_mkldnn=enable_mkldnn,
+                                                         use_doc_unwarping=False,
+                                                         use_layout_detection=False,
+                                                         text_detection_model_name='PP-OCRv4_mobile_det',
+                                                         text_recognition_model_name='PP-OCRv4_mobile_rec',
+                                                         use_doc_orientation_classify=False,
+                                                         enable_hpi=enable_hpi, )
+                logger.info("表格识别模块初始化成功")
+            except Exception as e:
+                logger.error(f"表格识别模块初始化失败: {e}")
+                self.table = None
+        else:
+            self.table = None
+            logger.info("表格识别模块已禁用（配置：ENABLE_TABLE_RECOGNITION=False）")
 
-        self.ocr_vl = PaddleOCRVL(vl_rec_backend="native")
+        # 根据配置决定是否初始化OCR-VL模块
+        enable_ocr_vl = getattr(config, "ENABLE_OCR_VL", True)
+        if enable_ocr_vl:
+            try:
+                vl_backend = getattr(config, "OCR_VL_BACKEND", "vllm-server")
+                # 构建初始化参数
+                vl_kwargs = {
+                    'vl_rec_backend': vl_backend,
+                    'device': 'gpu' if use_gpu else 'cpu',
+                }
+                if vl_backend == 'vllm-server':
+                    vl_rec_server_url = getattr(config, "OCR_VL_REC_SERVER_URL", "http://127.0.0.1:8078/v1")
+                    vl_kwargs['vl_rec_server_url'] = vl_rec_server_url
+                
+                # 初始化OCR-VL
+                self.ocr_vl = PaddleOCRVL(**vl_kwargs)
+                logger.info(f"OCR-VL模块初始化成功: backend={vl_backend}, device={'gpu' if use_gpu else 'cpu'}")
+            except Exception as e:
+                logger.error(f"OCR-VL模块初始化失败: {e}")
+                self.ocr_vl = None
+        else:
+            self.ocr_vl = None
+            logger.info("OCR-VL模块已禁用（配置：ENABLE_OCR_VL=False）")
 
         self.ocr = self._ocr
         self.vat = vat
@@ -352,8 +386,13 @@ class TextOcrModel(object):
                 - raw_result: 原始识别结果
         """
         # 如果使用OCR_VL，调用VL识别方法
-        if use_vl:
+        if use_vl and self.ocr_vl is not None:
             return self.table_recognize_vl(img)
+        
+        # 检查表格识别模块是否初始化
+        if self.table is None:
+            logger.error("表格识别模块未初始化，请在配置中启用 ENABLE_TABLE_RECOGNITION")
+            return {}
         
         try:
             # 快速空值检查
@@ -420,6 +459,11 @@ class TextOcrModel(object):
                 - rows: 提取的行数据列表
                 - raw_result: 原始识别结果
         """
+        # 检查OCR_VL模块是否初始化
+        if self.ocr_vl is None:
+            logger.error("OCR-VL模块未初始化，请在配置中启用 ENABLE_OCR_VL")
+            return {}
+        
         try:
             # 快速空值检查
             if img is None:
