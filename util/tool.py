@@ -169,6 +169,89 @@ def get_amount(string):
         return '¥ 0.00'
 
 
+def get_chinese_amount(string):
+    """
+    提取并转换中文大写金额为阿拉伯数字格式
+    例如：壹万贰仟叁佰肆拾伍元陆角柒分 -> ¥ 12345.67
+    """
+    if not string:
+        return '¥ 0.00'
+    
+    try:
+        # 中文数字映射
+        cn_num = {
+            '零': 0, '壹': 1, '贰': 2, '叁': 3, '肆': 4,
+            '伍': 5, '陆': 6, '柒': 7, '捌': 8, '玖': 9,
+            '〇': 0, '一': 1, '二': 2, '三': 3, '四': 4,
+            '五': 5, '六': 6, '七': 7, '八': 8, '九': 9
+        }
+        
+        # 单位映射
+        cn_unit = {
+            '拾': 10, '十': 10,
+            '佰': 100, '百': 100,
+            '仟': 1000, '千': 1000,
+            '万': 10000, '萬': 10000,
+            '亿': 100000000, '億': 100000000
+        }
+        
+        # 小数单位
+        decimal_unit = {
+            '角': 0.1, '毛': 0.1,
+            '分': 0.01
+        }
+        
+        raw = str(string).strip()
+        
+        # 按元分割整数和小数部分
+        parts = re.split(r'[元圆]', raw)
+        integer_part = parts[0] if len(parts) > 0 else ''
+        decimal_part = parts[1] if len(parts) > 1 else ''
+        
+        # 解析整数部分
+        total = 0
+        temp_num = 0
+        temp_unit = 1
+        
+        for char in integer_part:
+            if char in cn_num:
+                temp_num = cn_num[char]
+            elif char in cn_unit:
+                unit_value = cn_unit[char]
+                if unit_value >= 10000:  # 万、亿等大单位
+                    temp_num = (temp_num if temp_num > 0 else 1) * unit_value
+                    total += temp_num
+                    temp_num = 0
+                else:  # 十、百、千
+                    temp_num = (temp_num if temp_num > 0 else 1) * unit_value
+                    total += temp_num
+                    temp_num = 0
+        
+        # 加上剩余的数字
+        total += temp_num
+        
+        # 解析小数部分
+        decimal_value = 0
+        temp_decimal = 0
+        for char in decimal_part:
+            if char in cn_num:
+                temp_decimal = cn_num[char]
+            elif char in decimal_unit:
+                decimal_value += temp_decimal * decimal_unit[char]
+                temp_decimal = 0
+            elif char in ('整', '正'):
+                break
+        
+        # 合并整数和小数
+        result = total + decimal_value
+        
+        return f'¥ {result:.2f}'
+        
+    except Exception:
+        # 如果解析失败，尝试用get_amount兜底
+        return get_amount(string)
+
+
 def get_page(string):
     """提取页码信息（优化版，使用预编译正则）"""
     try:

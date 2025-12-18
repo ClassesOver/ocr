@@ -62,6 +62,9 @@ RUN uv pip install --no-cache-dir torch torchvision --index-url https://download
     uv pip install --no-cache-dir -U onnxruntime && \
     uv pip install --no-cache-dir -U pip && \
     uv pip install --no-cache-dir -U gevent && \
+    uv pip install --no-cache-dir -U paddlex[ocr] && \
+    uv pip install --no-cache-dir -U paddleocr[doc-parser] && \
+    uv pip install https://paddle-whl.bj.bcebos.com/nightly/cu126/safetensors/safetensors-0.6.2.dev0-cp38-abi3-linux_x86_64.whl && \
     uv cache prune 
 
 # 将虚拟环境解释器设为全局默认

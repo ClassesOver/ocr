@@ -135,15 +135,18 @@ def text_ocr(img):
     return context.chineseModel(img)
 
 
-def is_stock(stock):
-    if stock.get('qrcode'):
+def is_stock_v1(stock):
+    if stock.get('_stock_v1_detected'):
         return True
-    is_stock = all([stock.get('invoice_number'), stock.get('total_amount'),
-                    stock.get('code')])
-    if is_stock:
-        if len(stock.get('invoice_number')) < 7 or len(stock.get('code')) < 11:
-            is_stock = False
-    return is_stock
+
+
+def is_stock_v2(stock):
+    if stock.get('_stock_v2_detected'):
+        return True
+
+
+def is_bill(bill):
+    return bill.get('_bill_detected', False)
 
 
 def detection_img(img, saveImage=False):
@@ -151,29 +154,52 @@ def detection_img(img, saveImage=False):
     invoice = {'invoice_type': ''}
     stock = {}
     result = {'type': '03', 'invoice': invoice, 'stock': stock}
-    if config.needInvoiceSummary:
-        try:
-            context.stock(img, stock, context)
-        except Exception as e:
-            logger.error(traceback.format_exc())
 
-    if is_stock(stock):
-        result['type'] = '02'
-        if not stock.get('total_amount'):
-            stock['total_amount'] = '¥ 0.00'
-        return result
-    else:
-        try:
-            context.vat(img, invoice, context, saveImage=saveImage)
-        except Exception as e:
-            logger.error(traceback.format_exc())
-        if invoice['invoice_type']:
+    # 入库单优先检测
+    try:
+        result['stock'] = stock = {}
+        context.stock_v1(img, stock, context, saveImage=saveImage)
+        if is_stock_v1(stock):
+            result['type'] = '02'
+            result['invoice'] = {}
+            return result
+    except Exception as e:
+        logger.error(traceback.format_exc())
+    try:
+        result['stock'] =  stock = {}
+        context.stock_v2(img, stock, context, saveImage=saveImage)
+        if is_stock_v2(stock):
+            result['type'] = '02'
+            result['invoice'] = {}
+            return result
+    except Exception as e:
+        logger.error(traceback.format_exc())
+
+    # 财务票据检测（无入库单时尝试）
+    try:
+        result['invoice'] = invoice = {'invoice_type': ''}
+        context.bill(img, invoice, context, saveImage=saveImage)
+        if is_bill(invoice) and invoice['invoice_type']:
             result['stock'] = {}
             result['type'] = '01'
-        else:
-            if stock:
-                result['invoice'] = {}
-                result['type'] = '02'
+            return result
+    except Exception as e:
+        logger.error(traceback.format_exc())
+
+
+    # 增值税发票检测
+    try:
+        result['invoice'] = invoice = {'invoice_type': ''}
+        context.vat(img, invoice, context, saveImage=saveImage)
+    except Exception as e:
+        logger.error(traceback.format_exc())
+    if invoice['invoice_type']:
+        result['stock'] = {}
+        result['type'] = '01'
+    else:
+        if stock:
+            result['invoice'] = {}
+            result['type'] = '02'
 
     return result
 
