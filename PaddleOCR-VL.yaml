@@ -5,6 +5,16 @@ batch_size: 64
 
 use_queues: True
 
+# 高性能推理配置
+use_hpip: True
+hpi_params:
+  config:
+    selected_backends:
+      cpu: onnxruntime  # CPU 使用 onnxruntime 进行加速
+    backend_config:
+      onnxruntime:
+        num_threads: 0  # 0 表示使用所有可用线程
+
 use_doc_preprocessor: False
 use_layout_detection: True
 use_chart_recognition: False

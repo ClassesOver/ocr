@@ -7,9 +7,14 @@ services:
     restart: unless-stopped
     ports:
       - "8078:8078"
+      - "8079:8079"
     environment:
       - TZ=Asia/Shanghai
     volumes:
-      - code/:/app/code
+      - ./code:/app/code
       - logs:/app/logs
       - models:/root/.paddlex/official_models
+
+volumes:
+  logs:
+  models:

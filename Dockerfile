@@ -38,8 +38,8 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
 # 使用 uv 安装 Python 3.11
 RUN uv python install 3.11
 
-# 创建应用目录
-RUN mkdir -p /app/code
+# 创建应用目录和日志目录
+RUN mkdir -p /app/code /app/logs
 
 # 使用 uv 创建 Python 3.11 虚拟环境
 RUN uv venv --python 3.11 /app/.venv
@@ -72,10 +72,16 @@ RUN ln -sf /app/.venv/bin/python /usr/local/bin/python && \
     ln -sf /app/.venv/bin/pip /usr/local/bin/pip
 
 RUN paddleocr install_hpi_deps cpu
+
 RUN paddlex --install serving
 
-# 暴露端口
-EXPOSE 8078
+# 复制启动脚本并设置执行权限
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
 
-# 启动应用（使用虚拟环境中的 Gunicorn）
-CMD ["/app/.venv/bin/gunicorn", "-c", "gunicorn.conf.py", "api:app"]
+
+# 暴露端口（Flask 8078, PaddleX 8079）
+EXPOSE 8078 8079
+
+# 启动应用（同时启动 Flask 和 PaddleX）
+CMD ["/app/start.sh"]
