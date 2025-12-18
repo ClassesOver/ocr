@@ -373,7 +373,6 @@ class TextOcrModel(object):
             
             try:
                 processed_tables = detect_and_process_tables(
-                    output_dir='op',
                     image=img,
                     preprocess_method=preprocess_method,
                     detector=self.table_det,
