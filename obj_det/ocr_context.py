@@ -4,8 +4,6 @@ from obj_det.stock_detect import stock_detection as stock_v1
 from obj_det.bill_detect import bill_detection as bill
 from settings import ocr_predict
 from paddleocr import TextRecognition as _TextRecognition
-from paddleocr import TableRecognitionPipelineV2 as _TableRecognitionPipelineV2
-from paddleocr import PaddleOCRVL
 from loguru import logger
 import cv2
 import numpy as np
@@ -23,18 +21,6 @@ class TextRecognition(_TextRecognition):
             }
         })
         return res
-
-class TableRecognitionPipelineV2(_TableRecognitionPipelineV2):
-
-    def _get_extra_paddlex_predictor_init_args(self):
-        res = super()._get_extra_paddlex_predictor_init_args()
-        res.update({
-            'hpi_config': {
-                'backend': 'onnxruntime',
-            }
-        })
-        return res
-
 
 
 class TextOcrModel(object):
@@ -93,16 +79,6 @@ class TextOcrModel(object):
             _ = self._paddle_ocr_instance.predict(warmup_img)
         except Exception as e:
             logger.debug(f"PaddleOCR 预热失败: {e}")
-        # self.table = TableRecognitionPipelineV2(device='gpu' if use_gpu else 'cpu',
-        #                                         enable_mkldnn=enable_mkldnn,
-        #                                         use_doc_unwarping=False,
-        #                                         use_layout_detection=False,
-        #                                         text_detection_model_name='PP-OCRv4_mobile_det',
-        #                                         text_recognition_model_name='PP-OCRv4_mobile_rec',
-        #                                         use_doc_orientation_classify=False,
-        #                                         enable_hpi=enable_hpi, )
-
-        self.ocr_vl = PaddleOCRVL(vl_rec_backend="native")
 
         self.ocr = self._ocr
         self.vat = vat
@@ -339,200 +315,17 @@ class TextOcrModel(object):
     
     def table_recognize(self, img, use_vl=True):
         """
-        表格识别推理
+        表格识别推理（已禁用）
         
         Args:
             img: 输入图像（numpy数组）
-            use_vl: 是否使用OCR_VL模型识别（默认False，使用传统表格识别）
+            use_vl: 已废弃参数，保留以兼容接口
             
         Returns:
-            返回字典，包含以下字段：
-                - table_ocr_pred: 表格OCR预测结果
-                - rows: 提取的行数据列表
-                - raw_result: 原始识别结果
+            返回空字典
         """
-        # 如果使用OCR_VL，调用VL识别方法
-        if use_vl:
-            return self.table_recognize_vl(img)
-        
-        try:
-            # 快速空值检查
-            if img is None:
-                logger.warning("table_recognize: 输入图像为空")
-                return {}
-            
-            if not isinstance(img, np.ndarray) or img.size == 0:
-                logger.warning("table_recognize: 输入图像无效")
-                return {}
-            
-            # 图像预处理（可选，根据需要调整）
-            processed_img = self._preprocess_image(img)
-            if processed_img is None:
-                return {}
-            
-            # 执行表格识别
-            logger.debug(f"开始表格识别，图像尺寸: {processed_img.shape}")
-            result = self.table.predict(processed_img,
-                                        use_doc_orientation_classify=False,
-                                        use_e2e_wired_table_rec_model=True,
-                                        use_doc_unwarping=False,
-                                        use_layout_detection=False,
-                                        use_table_orientation_classify=False)
-            
-            if not result or len(result) == 0:
-                logger.warning("table_recognize: 表格识别结果为空")
-                return {}
-            
-            # 提取table_ocr_pred
-            table_res = result[0].get('table_res_list', [])
-            if not table_res or len(table_res) == 0:
-                logger.warning("table_recognize: table_res_list为空")
-                return {}
-            
-            # 提取table_ocr_pred和行数据
-            table_ocr_pred = table_res[0].get('table_ocr_pred', {})
-            if not table_ocr_pred:
-                logger.warning("table_recognize: table_ocr_pred为空")
-                return {}
-            
-            # 返回结构化数据，包含table_ocr_pred和提取的行数据
-            rows = self._extract_rows_from_table_ocr_pred(table_ocr_pred)
-            return {
-                'table_ocr_pred': table_ocr_pred,
-                'rows': rows,
-                'raw_result': result
-            }
-            
-        except Exception as e:
-            logger.error(f"表格识别错误: {e}", exc_info=True)
-            return {}
-    
-    def table_recognize_vl(self, img):
-        """
-        使用OCR_VL模型进行表格识别
-        
-        Args:
-            img: 输入图像（numpy数组）
-            
-        Returns:
-            返回字典，包含以下字段：
-                - text: OCR_VL识别的文本结果
-                - rows: 提取的行数据列表
-                - raw_result: 原始识别结果
-        """
-        try:
-            # 快速空值检查
-            if img is None:
-                logger.warning("table_recognize_vl: 输入图像为空")
-                return {}
-            
-            if not isinstance(img, np.ndarray) or img.size == 0:
-                logger.warning("table_recognize_vl: 输入图像无效")
-                return {}
-            
-            # 图像预处理
-            processed_img = self._preprocess_image(img)
-            if processed_img is None:
-                return {}
-            
-            # 使用OCR_VL进行表格识别
-            logger.debug(f"开始OCR_VL表格识别，图像尺寸: {processed_img.shape}")
-            
-            # OCR_VL通常使用prompt来指定任务
-            prompt = "请识别这个表格，并以结构化格式返回表格内容。"
-            
-            # 调用OCR_VL模型（尝试多种可能的API调用方式）
-            result = self.ocr_vl.predict(processed_img, prompt=prompt)
-            
-            if not result:
-                logger.warning("table_recognize_vl: OCR_VL识别结果为空")
-                return {}
-            
-            # 处理OCR_VL返回的结果
-            # OCR_VL通常返回文本或结构化数据
-            if isinstance(result, str):
-                # 如果是字符串，尝试解析为表格结构
-                text = result
-                rows = self._parse_vl_table_text(text)
-            elif isinstance(result, dict):
-                # 如果是字典，直接使用
-                text = result.get('text', '')
-                rows = result.get('rows', [])
-                if not rows and text:
-                    rows = self._parse_vl_table_text(text)
-            else:
-                text = str(result)
-                rows = self._parse_vl_table_text(text)
-            
-            # 返回结构化数据
-            return {
-                'text': text,
-                'rows': rows,
-                'raw_result': result
-            }
-            
-        except Exception as e:
-            logger.error(f"OCR_VL表格识别错误: {e}", exc_info=True)
-            # 如果OCR_VL失败，可以回退到传统方法
-            logger.warning("OCR_VL识别失败，尝试使用传统表格识别方法")
-            try:
-                return self.table_recognize(img, use_vl=False)
-            except:
-                return {}
-    
-    def _parse_vl_table_text(self, text):
-        """
-        解析OCR_VL返回的表格文本，提取行数据
-        
-        Args:
-            text: OCR_VL返回的文本
-            
-        Returns:
-            行数据列表
-        """
-        try:
-            rows = []
-            if not text:
-                return rows
-            
-            # 按行分割
-            lines = text.split('\n')
-            for line in lines:
-                line = line.strip()
-                if not line:
-                    continue
-                
-                # 尝试按制表符或空格分割单元格
-                # 可以根据实际OCR_VL返回格式调整
-                cells = []
-                if '\t' in line:
-                    # 制表符分隔
-                    cell_texts = line.split('\t')
-                elif '|' in line:
-                    # 管道符分隔（Markdown表格格式）
-                    cell_texts = [cell.strip() for cell in line.split('|') if cell.strip()]
-                else:
-                    # 尝试按多个空格分割
-                    cell_texts = [cell.strip() for cell in line.split('  ') if cell.strip()]
-                    if len(cell_texts) == 1:
-                        # 如果只有一个单元格，按单个空格分割
-                        cell_texts = line.split(' ')
-                
-                # 构建单元格字典
-                for idx, cell_text in enumerate(cell_texts):
-                    cells.append({
-                        'text': cell_text.strip(),
-                        'col': idx
-                    })
-                
-                if cells:
-                    rows.append(cells)
-            
-            return rows
-            
-        except Exception as e:
-            logger.error(f"解析OCR_VL表格文本错误: {e}", exc_info=True)
-            return []
+        logger.warning("表格识别功能已禁用")
+        return {}
     
     def _convert_rows_to_html(self, rows):
         """

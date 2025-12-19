@@ -101,19 +101,19 @@ def stock_detection(img_numpy, stock=None, context=None, saveImage=False):
                     continue
 
                 x1, y1, x2, y2 = [int(v) for v in xyxy]
-                if label == 'line':
-                    # line标签边界容错处理
-                    img_h, img_w = im0.shape[:2]
-
-                    x1 = 0  # 左边界，确保不小于0
-                    x2 = img_w  # 右边界，确保不超过图像宽度
-                    # y方向：添加容错边距，但确保不超出图像范围
-                    margin_y = 10  # 上下边距容错（像素）
-                    y1 = max(0, y1 - margin_y)  # 上边界
-                    y2 = min(img_h, y2 + margin_y)  # 下边界
-
-                    y1 = max(0, min(y1, img_h - 1))
-                    y2 = max(y1 + 1, min(y2, img_h))
+                # if label == 'line':
+                #     # line标签边界容错处理
+                #     img_h, img_w = im0.shape[:2]
+                #
+                #     x1 = 0  # 左边界，确保不小于0
+                #     x2 = img_w  # 右边界，确保不超过图像宽度
+                #     # y方向：添加容错边距，但确保不超出图像范围
+                #     margin_y = 10  # 上下边距容错（像素）
+                #     y1 = max(0, y1 - margin_y)  # 上边界
+                #     y2 = min(img_h, y2 + margin_y)  # 下边界
+                #
+                #     y1 = max(0, min(y1, img_h - 1))
+                #     y2 = max(y1 + 1, min(y2, img_h))
 
                 if saveImage:
                     stock_fp = os.path.join('images', 'stock_v1')
