@@ -21,6 +21,7 @@ virtualenv/
 # PyCharm
 .idea/
 *.iml
+images/
 
 # VSCode
 .vscode/
